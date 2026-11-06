@@ -15,6 +15,7 @@ import { LANGS } from '../shared/theme.js';
 import { api } from '../shared/api.js';
 import { BottomSheet, ConfirmDialog, FormSheet, WheelPicker } from './common.jsx';
 import { OptionsScreen, AccountScreen } from './OptionsScreen.jsx';
+import { useSessionLangs, defaultName } from '../shared/newSession.js';
 import { usePrefs, syncWithAccount } from '../shared/prefs.js';
 import { useT } from '../shared/i18n.js';
 import UpdateSheet from './UpdateSheet.jsx';
@@ -25,15 +26,8 @@ import { ChevronRightIcon, PencilIcon, PlusIcon, SettingsIcon, TrashIcon } from 
 import { BRAND, BRAND_SOFT } from '../shared/brand.js';
 import Wordmark from '../shared/Wordmark.jsx';
 
-const SX_CODES = SX_LANGS.map((l) => l.code);
-const IN_CODES = LANGS.map((l) => l.code); // 'auto'(자동 감지) 포함 — 실시간 번역의 입력 언어 힌트
 
 // 세션 이름 자리 표시 '10/22 14:30 양방향 통역' — 비워 두고 만들면 이 이름으로
-function defaultName(mode, t) {
-  const d = new Date();
-  const p2 = (n) => String(n).padStart(2, '0');
-  return `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())} ${mode === 'twoway' ? t('modeTwoway') : t('modeOneway')}`;
-}
 
 // 세션 목록 한 줄 — 누르면 열기, 길게 누르면(0.5초, 손가락이 거의 안 움직일 때) 이름 바꾸기·삭제 시트. PC 우클릭도 같음.
 function SessionRow({ s, t, onOpen, onActions }) {
@@ -75,57 +69,29 @@ function NewSessionSheet({ open, onClose, onCreated }) {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);           // 넘어가는 방향(화면 미끄러짐)
   const [mode, setMode] = useState('oneway');
-  const [src, setSrc] = useState('auto');      // 실시간 번역: 입력 언어(자동 감지 기본)
-  const [target, setTarget] = useState('ko');  // 실시간 번역: 출력 언어(모국어 기본)
-  const [a, setA] = useState('ko');            // 양방향: 내 언어(모국어 기본)
-  const [b, setB] = useState('en');            // 양방향: 상대 언어(지난번 값)
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const langs = useSessionLangs(open);
   useEffect(() => {
     if (!open) return;
     setStep(0); setDir(1); setMode('oneway'); setName(''); setErr(''); setBusy(false);
-    const nat = prefs.nativeLang || 'ko';
-    let lastB = null;
-    try { lastB = localStorage.getItem('kac-sx-b'); } catch {}
-    setSrc('auto');
-    setTarget(nat);
-    setA(nat);
-    setB(lastB && lastB !== nat ? lastB : nat === 'en' ? 'ko' : 'en');
-    // eslint-disable-next-line
   }, [open]);
 
   const oneway = mode === 'oneway';
-  const boxes = oneway
-    ? [{ k: 'src', caption: t('inputLang'), title: t('nsSrc'), value: src, codes: IN_CODES }, { k: 'target', caption: t('outputLang'), title: t('nsTarget'), value: target, codes: SX_CODES }]
-    : [{ k: 'a', caption: t('myLang'), title: t('nsMine'), value: a, codes: SX_CODES }, { k: 'b', caption: t('otherLang'), title: t('nsOther'), value: b, codes: SX_CODES }];
+  const boxes = langs.boxes(mode, t);
   const box = boxes[step === 2 ? 1 : 0];
-  const pickLang = (k, v) => {
-    if (k === 'src') setSrc(v);
-    if (k === 'target') setTarget(v);
-    // 양방향은 두 언어가 같을 수 없다 — 같은 걸 고르면 서로 바꾼다
-    if (k === 'a') { if (v === b) setB(a); setA(v); }
-    if (k === 'b') { if (v === a) setA(b); setB(v); }
-  };
+  const { pickLang } = langs;
   const fallbackName = defaultName(mode, t);
   const go = (n) => { setDir(n > step ? 1 : -1); setErr(''); setStep(n); };
   const create = async () => {
     if (busy) return;
     setBusy(true); setErr('');
     try {
-      const s = await api.create({ title: name.trim() || fallbackName, pipeline: 'soniox', preset: mode, src: 'mic', inLang: oneway ? src : 'auto' });
+      const s = await api.create({ title: name.trim() || fallbackName, pipeline: 'soniox', preset: mode, src: 'mic', inLang: oneway ? langs.src : 'auto' });
       if (!s || !s.id) throw new Error((s && s.error) || t('netError'));
-      try {
-        if (oneway) {
-          localStorage.setItem('kac-sx-target', target);
-          localStorage.setItem('kac-sx-target:' + s.id, target); // 다시 열 때 이 세션의 출력 언어 복원
-        } else {
-          localStorage.setItem('kac-sx-a', a);
-          localStorage.setItem('kac-sx-b', b);
-          localStorage.setItem('kac-sx-pair:' + s.id, `${a}|${b}`); // 다시 열 때 이 세션의 두 언어 복원
-        }
-      } catch {}
-      onCreated({ ...s, _target: oneway ? target : undefined });
+      langs.remember(s.id, mode);
+      onCreated({ ...s, _target: oneway ? langs.target : undefined });
     } catch (e) {
       setErr(t('createFail', { msg: e.message || t('netError') }));
       setBusy(false);

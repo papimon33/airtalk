@@ -8,7 +8,7 @@ import { BRAND } from './brand.js';
 
 export default function Wordmark({ size = 23, sx }) {
   return (
-    <Box component="span" role="img" aria-label="AirTalk" sx={{ fontFamily: "'Nunito', 'Pretendard', system-ui, sans-serif", fontWeight: 900, fontSize: size, letterSpacing: '-0.02em', lineHeight: 1, color: '#1F1E1D', userSelect: 'none', ...sx }}>
+    <Box component="span" role="img" aria-label="AirTalk" sx={{ fontFamily: "'Nunito', 'Pretendard', system-ui, sans-serif", fontWeight: 900, fontSize: size, letterSpacing: '-0.02em', lineHeight: 1, color: 'text.primary', userSelect: 'none', ...sx }}>
       a
       <Box component="span" sx={{ display: 'inline-grid' }}>
         <Box component="span" sx={{ gridArea: '1 / 1' }}>ı</Box>

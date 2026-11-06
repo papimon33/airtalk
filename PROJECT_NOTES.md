@@ -41,6 +41,13 @@
 - TTS 재입력 방지(2중): ① `audio.js` — TTS 재생을 **WebRTC 루프백(RTCPeerConnection 쌍)** 경로로 우회해 브라우저 AEC 가 재생음을 마이크에서 제거(실패 시 재생 중 자동 음소거 폴백 `aecActive`). ② 서버 **자기음성 텍스트 필터**(`security_util.js echoMatch` + server `recentTts`/`noteTts`/`isSelfEcho`) — 시스템 오디오 캡처·기기 간 경로로 되돌아온 TTS 문장을 20초 내 유사도 매칭으로 버림(runSoniox·폰 PTT commit 에서 확인, 화면 카드도 제거).
 
 ## 실시간 번역(soniox) 최근 사양
+- **Soniox 모델 stt-rt-v6(2026-11-06, `config.js` `SONIOX_MODEL`, v5 는 2026-12-15 제거)**: 언어·설정은 v5 와 같지만 끊는 방식이 달라졌다. 실측: 원문을 **언어가 하나인 덩어리**(절·문장)로 확정하고 번역을 약 0.1초 뒤 바로 보낸다. 비확정 응답도 응답마다 언어 하나. 문장 속 영어(RFID·X-ray)는 문장 언어로 표시. `<end>` 는 말을 더 모아 늦게 올 수 있어 v5(카드 133개·최대 213자) 대비 카드가 크게 합쳐졌다(같은 발표 54개·최대 760자).
+  · `max_endpoint_delay_ms` 는 **기본 2000 유지**. 1000 은 문단 첫머리가 조각나고 단어가 사라져 인식 오류가 두 배가 된다("학회 주관의. 엑스포에서."). 대신 서버가 카드를 나눈다(아래 둘).
+  · **말하는 사람이 바뀌면 카드 나누기(양방향 한 채널·데스크 단일 마이크, `flipHold`)**: 카드 언어와 다른 확정 원문은 카드에 넣지 않고 잡아 둔다. 카드 언어로 돌아오면 문장 속 외국어로 보고 되돌리고, `<end>`·문장 끝·12자 이상이면 앞 카드를 확정한 뒤 새 카드로 옮긴다. 앞 카드 말이 4자 미만이면 첫 단어 오인식일 수 있어 잡지 않는다(다수결이 바로잡음). 진행 중인 말은 처음부터 새 카드로 보인다. `<end>` 에 끊긴 짧은 첫마디(8자 미만)는 1.8초 기다렸다가 같은 언어가 이어지면 끊겨 생긴 마침표를 빼고 합친다("大変。"+"参考に…"). 늦은 번역 꼬리는 `source_language` 로 앞 카드에 보낸다.
+  · **긴 카드 나누기(`LONG_CARD` 120, 데스크 제외)**: 확정 번역이 도착한 응답에서 원문·번역이 모두 문장 끝이면 확정. 자동 감지 세션은 언어가 잠긴 뒤에만(첫 확정에서 재연결하므로).
+  · 카드 언어 판정(`langJudge`): 번역의 `source_language` 를 마지막 값이 아니라 글자 수로 센다. 끝에 붙은 단어 하나로 카드 언어가 뒤집히던 문제.
+  · 다듬기(`polishText`): 300자 자르기·토큰 220 고정으로 긴 카드의 뒷부분이 사라졌다(501자 → 192자). 전체를 보내고 토큰은 번역 길이에 맞추며(1500자 초과 카드는 다듬지 않음), `finish_reason: length` 와 40자 이상에서 40% 넘게 줄어든 결과는 버린다(`polishLengthOk`).
+  · 검증 도구: `tools/eval/speech-e2e.mjs`(발표, `--max-delay`), `tools/eval/dialogue-e2e.mjs`(대화). 토큰을 직접 보려면 `SONIOX_WS_URL` 로 기록용 프록시를 끼운다.
 - TTS(라벨 'TTS')는 **3모드 전부** 제공, 녹음 중 토글 가능(`audio.js setTts` → 서버 `{type:'tts',on,gender}`), 호스트도 재생(`ws._audioOut` 시 `sendAudioToHosts`; 클라는 첫 파이프만 재생해 이중재생 방지). 음성(성별) 라벨은 '음성'.
 - 참여자 발화(PTT)는 **양방향 모드 기본 기능**(토글 삭제, GET 세션이 preset 기준으로 viewerPTT 계산). 뷰어 발화 버튼은 mobile.html **우하단**.
 - **발화 배타 락**: room.hostTalking(마이크 연결=true, '발화 멈춤' 토글 시 `micState` 로 갱신) + room.speaking(뷰어). 점유 중 `ptt-denied`, 상태는 `ptt-state{busy}` 브로드캐스트 — 호스트가 발화 멈춤을 눌러야 뷰어가 발화 가능.
@@ -100,9 +107,10 @@
   · 화면: `client/src/` = `shared/`(api·theme·brand·audio·env·prefs·i18n·icons·Wordmark·ConfirmDialog·sessionMeta·authState) / `session/TranslateView.jsx` / `phone/`(폰 앱 화면, 구 components/mobile + AppDownload) / `pc/`(TopBar·AccountMenu·SessionList·CommandPalette·DesktopAppDialog·PcRows·icons) / `admin/`(탭별 `*Tab.jsx`·TermsConfigPage·charts·format·tabs) / `auth/Login.jsx`.
   · 최상위: 평가·스크립트·TTS 샘플 → `tools/`, 문서 → `docs/`.
   · 화면 자동 테스트(Playwright, 이 컴퓨터의 Chrome): `npm run build` 후 `npm run test:e2e`. `test/e2e/server.mjs` 가 가짜 엔진 + 격리 DATA_DIR 로 서버(:3012)를 띄우고, :3013 으로 엔진 문장을 넣는다.
+- **PC 화면을 폰과 통일(2026-11-06)**: 시험 스위치(`?ui=v2`, `PC_V2`)를 없애고 기본으로. 실시간 번역·양방향은 PC 도 `MobileLive`(desktop) 하나만 쓰고, `TranslateView` 아래쪽 옛 화면은 안내데스크·구 번역 세션 전용(버튼 모양만 폰과 맞춤). 설정은 드롭다운 대신 폰 `OptionsScreen`·`AccountScreen` 을 오른쪽 패널로(PC 줄: 관리자 페이지·앱 설치), 테마는 `prefs.theme`(라이트/다크/시스템). 시트(`BottomSheet`)는 PC 에서 가운데 창. 새 세션 창은 폰과 같은 항목(모드·언어·이름)을 한 화면에(언어 공용 훅 `shared/newSession.js`). 목록 화면·관리자·로그인·안내데스크 문구는 아직 한국어 고정(시스템 언어 미적용).
 - **PC 화면 정리(2026-10-27)**: 왼쪽 메뉴(최근 대화·데스크 안내 메뉴 포함) 삭제 → 위 띠 `pc/TopBar.jsx`(왼쪽 로고 = 목록, 오른쪽 위 개인설정 아이콘 `AccountMenu`: 다크 모드·정보 변경·관리자 페이지·앱 설치·로그아웃).
   관리자 화면은 위 탭(`admin/tabs.js`: 사용량·로그·계정 관리·용어 설정·시스템·보안). 안내데스크 탭(등록·통계)은 삭제. `/desks`·`/admin/desks` 는 목록·사용량으로.
-  안내데스크 세션은 새 세션 창의 '다른 세션' 아래 별도 항목(관리자만 보임 — 서버도 관리자만 생성)으로 만들고, 실시간 번역 세션과 같은 목록에 섞여 보인다(폰 앱 목록에는 안 나옴).
+  안내데스크 세션은 새 세션 창의 별도 항목(안내데스크 권한이 있는 계정만 보임)으로 만들고, 실시간 번역 세션과 같은 목록에 섞여 보인다(폰 앱 목록에는 안 나옴).
 - **길안내 지도 삭제(2026-10-27)**: 시설 감지·GPT 분류·지도 제안/표시(`wayfind*` 메시지)·QR 뷰어/데스크 태블릿의 지도·`/map` 자산(`assets/map`)·데스크 진행 화면의 지도 설정 전부 삭제.
   안내데스크 등록(레지스트리: 이름·층·방향)과 데스크 통계 API(`/api/admin/desk-stats`)도 삭제 — 세션은 이름만으로 만든다. 남은 `deskFloor`·`deskSide`·`deskName`·`wayfindLog` 필드는 부팅 시 정리(`migrateSessions`).
 - **로고 i 점도 보라(2026-10-27)**: `shared/Wordmark.jsx` — 점 없는 ı(검정) 위에 같은 자리의 i(보라)를 겹치고 점만 남게 아래를 잘라 낸다(clip-path inset 0.74em, 줄 높이 1 기준). QR 뷰어(join.html) 같은 방식, 앱 시작 그림(splash_wordmark.png)은 점 픽셀만 보라로(다음 앱 빌드부터).

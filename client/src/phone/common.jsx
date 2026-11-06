@@ -12,6 +12,7 @@ import { alpha } from '@mui/material/styles';
 import { useT, endonym } from '../shared/i18n.js';
 import { openOverlay, closeOverlay } from './backstack.js';
 import { BRAND } from '../shared/brand.js';
+import { MOBILE_UI } from '../shared/env.js';
 import { BluetoothIcon, CheckIcon, ChevronRightIcon, HeadsetIcon, MicIcon, PhoneIcon, UsbIcon } from '../shared/icons.jsx';
 
 export { MOBILE_UI } from '../shared/env.js';
@@ -172,6 +173,24 @@ const IOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigato
 const noop = () => {};
 export function BottomSheet({ open, onClose, title, subtitle, action, children, maxHeight = '86dvh' }) {
   useBackClose(open, onClose);
+  // PC 는 끌어 올리는 시트 대신 가운데 창 — 내용과 모양은 폰과 같다
+  if (!MOBILE_UI) {
+    return (
+      <Dialog open={open} onClose={onClose} sx={{ zIndex: (th) => th.zIndex.modal + 1 }}
+        slotProps={{ paper: { sx: { borderRadius: '24px', border: 0, m: 2, width: '100%', maxWidth: 480, maxHeight, bgcolor: 'background.paper', backgroundImage: 'none', overflow: 'hidden', display: 'flex', flexDirection: 'column' } } }}>
+        {(title || action) && (
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2, px: 3, pt: 2.75, pb: 1.5 }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography component="h2" sx={{ fontSize: 21, fontWeight: 800, letterSpacing: '-0.015em' }}>{title}</Typography>
+              {subtitle && <Typography sx={{ fontSize: 13.5, color: 'text.secondary', mt: 0.25 }}>{subtitle}</Typography>}
+            </Box>
+            {action}
+          </Box>
+        )}
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, pb: 1 }}>{children}</Box>
+      </Dialog>
+    );
+  }
   return (
     <SwipeableDrawer
       anchor="bottom"

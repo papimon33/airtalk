@@ -8,7 +8,7 @@ import SessionList from './pc/SessionList.jsx';
 import Login from './auth/Login.jsx';
 import CommandPalette from './pc/CommandPalette.jsx';
 import { api } from './shared/api.js';
-import { MOBILE_UI, PHONE_BROWSER, IS_IPHONE, PC_V2 } from './shared/env.js';
+import { MOBILE_UI, PHONE_BROWSER, IS_IPHONE } from './shared/env.js';
 import AppDownload from './phone/AppDownload.jsx';
 import { getPrefs, subscribePrefs, resolveTheme } from './shared/prefs.js';
 import { isAdminTab } from './admin/tabs.js';
@@ -21,10 +21,9 @@ const AdminPage = lazy(() => import('./admin/AdminPage.jsx'));
 const MobileApp = lazy(() => import('./phone/MobileApp.jsx'));
 
 export default function App() {
-  // 폰 화면은 설정의 테마(라이트/다크/시스템)를 따른다 — 시스템이면 기기 설정 변경에도 바로 반응
-  const [mode, setMode] = useState(() => (MOBILE_UI ? resolveTheme(getPrefs().theme) : localStorage.getItem('kac-theme') || 'light'));
+  // 화면 테마는 설정(라이트/다크/시스템)을 따른다 — 시스템이면 기기 설정 변경에도 바로 반응
+  const [mode, setMode] = useState(() => resolveTheme(getPrefs().theme));
   useEffect(() => {
-    if (!MOBILE_UI) return undefined;
     const sync = () => setMode(resolveTheme(getPrefs().theme));
     const un = subscribePrefs(sync);
     let mq = null;
@@ -38,7 +37,7 @@ export default function App() {
   const [lostReason, setLostReason] = useState(''); // 다른 기기 로그인·비밀번호 변경으로 로그아웃된 이유(로그인 화면 안내)
   setPerms(user && user.perms); // 권한(TTS·안내데스크) — 화면들이 can() 으로 읽는다
   const [isFs, setIsFs] = useState(false); // 전체화면(안내데스크) — 위 띠 숨김
-  const theme = useMemo(() => buildTheme(mode, { brand: PC_V2 }), [mode]);
+  const theme = useMemo(() => buildTheme(mode, { brand: true }), [mode]);
 
   useEffect(() => {
     const h = () => setIsFs(!!(document.fullscreenElement || document.webkitFullscreenElement));
@@ -62,11 +61,6 @@ export default function App() {
     if (!MOBILE_UI) { try { window.history.replaceState({ view: 'sessions', session: null }, '', '/'); } catch {} }
   }), []);
 
-  const toggleTheme = () => {
-    const next = mode === 'dark' ? 'light' : 'dark';
-    setMode(next);
-    localStorage.setItem('kac-theme', next);
-  };
   const logout = async () => {
     try {
       await api.logout();
@@ -218,7 +212,7 @@ export default function App() {
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         {offlineBanner}
         {!session && !isFs && (
-          <TopBar onHome={() => navTo({ view: 'sessions' })} user={user} mode={mode} onToggleTheme={toggleTheme}
+          <TopBar onHome={() => navTo({ view: 'sessions' })} user={user}
             onAdmin={() => openAdmin()} onLogout={logout} onUserUpdate={(u) => setUser(u)} />
         )}
         <Box component="main" sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

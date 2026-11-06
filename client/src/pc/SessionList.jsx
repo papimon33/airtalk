@@ -4,25 +4,20 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import IconButton from '@mui/material/IconButton';
+import ButtonBase from '@mui/material/ButtonBase';
+import InputBase from '@mui/material/InputBase';
 import InputAdornment from '@mui/material/InputAdornment';
 import Avatar from '@mui/material/Avatar';
-import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import Dialog from '@mui/material/Dialog';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
-import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
-import Divider from '@mui/material/Divider';
 import Checkbox from '@mui/material/Checkbox';
 import Skeleton from '@mui/material/Skeleton';
-import Fab from '@mui/material/Fab';
 import { alpha } from '@mui/material/styles';
 import Snackbar from '@mui/material/Snackbar';
-import { PC_V2 } from '../shared/env.js';
 import { ModeIcon, shortDate, sessionLangs } from '../shared/sessionMeta.jsx';
 import { langName } from '../shared/i18n.js';
 import MuiAlert from '@mui/material/Alert';
@@ -38,6 +33,11 @@ import { api } from '../shared/api.js';
 import { RADIUS } from '../shared/theme.js';
 import { IcoHeadset } from './icons.jsx';
 import { can } from '../shared/authState.js';
+import { useT } from '../shared/i18n.js';
+import { BRAND, BRAND_SOFT } from '../shared/brand.js';
+import { useSessionLangs, defaultName } from '../shared/newSession.js';
+import { PickSheet, FormSheet } from '../phone/common.jsx';
+import { PlusIcon, ArrowRightIcon, SwapIcon, HeadsetIcon } from '../shared/icons.jsx';
 
 function rel(ts) {
   const d = Date.now() - ts;
@@ -86,8 +86,6 @@ export const SITUATIONS = [
 export const TYPE_NAME = { oneway: '실시간 번역', twoway: '양방향 통역', live: '실시간 번역', online: '실시간 번역', mobile: '양방향 통역', field: '양방향 통역', meeting: '양방향 통역' };
 // 세션 모드 → 아이콘(목록·모달 공용)
 export const MODE_ICON = { oneway: IconMode1, twoway: IconMode3, live: IconMode1, online: IconMode1, mobile: IconMode3, field: IconMode3, meeting: IconMode3 };
-// 안내데스크 세션(PC 전용 — 폰 앱 목록에는 나오지 않는다). 안내데스크 권한이 있는 계정만 만들 수 있다(서버도 막는다).
-const DESK_OPTION = { v: 'desk', title: '안내데스크', badge: '대면 안내', example: '안내원과 손님의 대화를 서로의 언어로 번역합니다. 손님용 태블릿은 QR 코드로 연결합니다.', Icon: IcoHeadset };
 
 // 세션 목록 행 아이콘 — 유형 무관 단일 채팅 아이콘(요청: 목록 아이콘 통일)
 export function IcoChat(props) {
@@ -116,35 +114,24 @@ function Highlight({ text, q }) {
 }
 
 // 새 세션 모달의 항목 카드(아이콘 · 이름 · 배지 · 설명 · 선택 표시)
-function OptionCard({ p, sel, onClick }) {
-  const Ic = p.Icon;
+function OptionCard({ Icon: Ic, title, desc, sel, onClick }) {
   return (
-    <Box
-      onClick={onClick}
-      role="button"
-      aria-pressed={sel}
+    <ButtonBase role="radio" aria-checked={sel} onClick={onClick}
       sx={{
-        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, borderRadius: 3.5, p: 1.75,
-        border: 2, borderColor: sel ? 'primary.main' : 'divider',
-        bgcolor: (t) => (sel ? alpha(t.palette.primary.main, 0.08) : 'transparent'),
+        display: 'flex', alignItems: 'center', gap: 1.75, width: '100%', textAlign: 'left', borderRadius: '20px', p: 1.75,
+        border: 2, borderColor: sel ? BRAND : 'divider',
+        bgcolor: (th) => (sel ? (th.palette.mode === 'dark' ? alpha(BRAND, 0.22) : BRAND_SOFT) : 'transparent'),
         transition: 'border-color .12s, background .12s',
-        '&:hover': { borderColor: sel ? 'primary.main' : 'text.disabled' },
-      }}
-    >
-      <Avatar variant="rounded" sx={{ width: 44, height: 44, borderRadius: 3, flex: 'none', bgcolor: (t) => alpha(t.palette.primary.main, 0.12), color: 'primary.main' }}>
+        '&:hover': { borderColor: sel ? BRAND : 'text.disabled' },
+      }}>
+      <Box sx={{ width: 44, height: 44, borderRadius: '13px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (th) => alpha(BRAND, th.palette.mode === 'dark' ? 0.28 : 0.12), color: BRAND }}>
         <Ic sx={{ width: 23, height: 23 }} />
-      </Avatar>
+      </Box>
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-          <Typography sx={{ fontWeight: 800, fontSize: 16 }}>{p.title}</Typography>
-          <Chip size="small" label={p.badge} sx={{ height: 20, fontSize: 11, fontWeight: 700, bgcolor: (t) => alpha(t.palette.primary.main, 0.1), color: 'primary.main' }} />
-        </Box>
-        <Typography sx={{ fontSize: 13, color: 'text.secondary', lineHeight: 1.4 }}>{p.example}</Typography>
+        <Typography component="span" sx={{ display: 'block', fontWeight: 800, fontSize: 16.5, color: sel ? BRAND : 'text.primary' }}>{title}</Typography>
+        <Typography component="span" sx={{ display: 'block', fontSize: 13.5, color: 'text.secondary', lineHeight: 1.45, mt: 0.25, wordBreak: 'keep-all' }}>{desc}</Typography>
       </Box>
-      <Box sx={{ width: 22, height: 22, flex: 'none', borderRadius: '50%', border: 2, borderColor: sel ? 'primary.main' : 'divider', bgcolor: sel ? 'primary.main' : 'transparent', display: 'grid', placeItems: 'center' }}>
-        {sel && <Box component="svg" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" sx={{ width: 12, height: 12 }}><path d="M5 13l4 4 10-11" /></Box>}
-      </Box>
-    </Box>
+    </ButtonBase>
   );
 }
 
@@ -157,14 +144,15 @@ function uniqueName(base, titles) {
 }
 
 export default function SessionList({ onOpen, createSignal }) {
+  const t = useT();
+  const [langPick, setLangPick] = useState(null); // 새 세션 창에서 고르는 언어 칸
   const canDesk = can('desk'); // 목록은 내가 만든 세션만이라 이름 변경·삭제는 모든 줄에서 가능
   const [list, setList] = useState(null);
   const [q, setQ] = useState(''); // 검색어 — 제목+대화 내용(서버 검색)
   const [dlg, setDlg] = useState(false);
   const [name, setName] = useState('');
-  const [editName, setEditName] = useState(false); // 새 세션 모달 제목 편집
-  const [autoName, setAutoName] = useState(true); // 제목을 손대지 않았으면 고른 항목에 맞춰 기본 제목을 바꾼다
   const [preset, setPreset] = useState('oneway'); // oneway=실시간 번역 / twoway=양방향 통역 / desk=안내데스크
+  const langs = useSessionLangs(dlg);
   const [deskStat, setDeskStat] = useState({}); // 안내데스크 현황: id → { hostOn, active, lang, viewers }
   const [menu, setMenu] = useState(null);
   const [snack, setSnack] = useState(null);
@@ -203,29 +191,26 @@ export default function SessionList({ onOpen, createSignal }) {
   const baseOf = (v) => (v === 'desk' ? '안내데스크' : '새 세션');
   const titles = () => (list || []).map((s) => s.title);
   const openDlg = () => {
-    setName(uniqueName(baseOf('oneway'), titles()));
-    setAutoName(true);
-    setEditName(false);
-    setPreset('oneway'); // 모달을 열 때마다 기본 모드(실시간 번역)로
+    setName('');
+    setPreset('oneway'); // 창을 열 때마다 기본 모드(실시간 번역)로
+    setLangPick(null);
     setDlg(true);
   };
-  const pickPreset = (v) => {
-    setPreset(v);
-    if (autoName) setName(uniqueName(baseOf(v), titles()));
-  };
+  const namePlaceholder = preset === 'desk' ? uniqueName(baseOf('desk'), titles()) : defaultName(preset, t);
 
   const [creating, setCreating] = useState(false); // 만들기 연타 → 세션 2개 생성 방지
   const create = async () => {
     if (creating) return;
-    const title = name.trim() || uniqueName(baseOf(preset), titles());
+    const title = name.trim() || namePlaceholder;
     const body = preset === 'desk'
       ? { title, pipeline: 'desk', inLang: 'auto' }
-      : { title, pipeline: 'soniox', preset, inLang: 'auto' };
+      : { title, pipeline: 'soniox', preset, src: 'mic', inLang: preset === 'oneway' ? langs.src : 'auto' };
     setCreating(true);
     try {
       const s = await api.create(body);
+      if (preset !== 'desk') langs.remember(s.id, preset);
       setDlg(false);
-      onOpen(s);
+      onOpen(preset === 'oneway' ? { ...s, _target: langs.target } : s);
     } catch (e) {
       setSnack({ ok: false, msg: '세션 생성 실패: ' + (e.message || '네트워크 오류') });
     } finally {
@@ -282,11 +267,9 @@ export default function SessionList({ onOpen, createSignal }) {
       },
     });
   };
-  const saveRename = async () => {
-    const { id, val } = rename;
-    setRename(null);
+  const saveRename = async (id, val) => {
     try { await api.patch(id, { title: (val || '').trim() || '제목 없음' }); }
-    catch (e) { setSnack({ ok: false, msg: '제목 변경 실패: ' + (e.message || '네트워크 오류') }); }
+    catch (e) { setSnack({ ok: false, msg: '이름 변경 실패: ' + (e.message || '네트워크 오류') }); }
     reload();
   };
   const shown = list || [];
@@ -321,11 +304,6 @@ export default function SessionList({ onOpen, createSignal }) {
             )}
             {!selMode && shown.length > 0 && (
               <Button size="small" onClick={() => setSelMode(true)} sx={{ color: 'text.secondary', flex: 'none' }}>선택</Button>
-            )}
-            {!selMode && (
-              <Button variant="contained" startIcon={<AddIcon />} onClick={openDlg} sx={{ flex: 'none', display: { xs: 'none', sm: 'inline-flex' } }}>
-                새 세션
-              </Button>
             )}
           </Box>
 
@@ -392,7 +370,7 @@ export default function SessionList({ onOpen, createSignal }) {
           {shown.map((s, si) => {
             const checked = selIds.has(s.id);
             const desk = s.pipeline === 'desk';
-            const v2Row = PC_V2; // PC 새 화면: 폰 목록과 같은 줄(모드 아이콘 + '날짜 · 언어')
+            const v2Row = true; // 폰 목록과 같은 줄(모드 아이콘 + '날짜 · 언어')
             const searching = !!q.trim();
             return (
             <Box
@@ -401,8 +379,6 @@ export default function SessionList({ onOpen, createSignal }) {
               sx={{
                 display: 'flex', alignItems: searching && s.snippet ? 'flex-start' : 'center', gap: 1.5, px: 2, py: 1.9,
                 borderRadius: 2, cursor: 'pointer', position: 'relative',
-                // 행 사이 구분선(마지막 행 제외) — hover 라운드 배경과 공존하도록 행 자체에 하단선
-                borderBottom: si < shown.length - 1 ? '1px solid' : 'none', borderColor: 'divider',
                 bgcolor: selMode && checked ? (t) => alpha(t.palette.text.primary, 0.06) : 'transparent',
                 '&:hover': { bgcolor: (t) => alpha(t.palette.text.primary, 0.05) },
                 '&:hover .rowKebab': { opacity: 1, pointerEvents: 'auto' },
@@ -479,15 +455,11 @@ export default function SessionList({ onOpen, createSignal }) {
         </Box>
       </Box>
 
-      {/* 좁은 창: 우하단 고정 + 버튼(화면 이동해도 위치 유지) */}
-      <Fab
-        color="primary"
-        aria-label="새 세션"
-        onClick={openDlg}
-        sx={{ position: 'fixed', right: 20, bottom: 'calc(20px + env(safe-area-inset-bottom))', display: { xs: 'flex', sm: 'none' }, zIndex: 1200 }}
-      >
-        <AddIcon />
-      </Fab>
+      {/* 새 세션 + 버튼(폰과 같은 모양·자리) */}
+      <ButtonBase onClick={openDlg} aria-label={t('newSession')}
+        sx={{ position: 'fixed', right: 24, bottom: 'calc(28px + env(safe-area-inset-bottom))', width: 60, height: 60, borderRadius: '18px', bgcolor: BRAND, color: '#fff', boxShadow: '0 6px 18px rgba(91,79,232,0.35)', zIndex: 1200 }}>
+        <PlusIcon strokeWidth={2.4} sx={{ fontSize: 28 }} />
+      </ButtonBase>
 
       <Menu anchorEl={menu?.anchor} open={!!menu} onClose={() => setMenu(null)}
         slotProps={{ paper: { sx: { '& .MuiMenuItem-root': { fontSize: 13 } } } }}>
@@ -515,71 +487,47 @@ export default function SessionList({ onOpen, createSignal }) {
         )}
       </Menu>
 
-      {/* 새 세션 모달: 상단 제목칸(펜으로 수정) + 모드 선택 */}
-      <Dialog open={dlg} onClose={() => setDlg(false)} PaperProps={{ sx: { width: 440, maxWidth: 440 } }}>
-        <DialogContent sx={{ pt: 3 }}>
-          {editName ? (
-            <TextField
-              autoFocus
-              fullWidth
-              size="small"
-              value={name}
-              onChange={(e) => { setName(e.target.value); setAutoName(false); }}
-              onBlur={() => setEditName(false)}
-              onKeyDown={(e) => { if (e.key === 'Enter') setEditName(false); }}
-              sx={{ mb: 1 }}
-            />
-          ) : (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <Typography sx={{ fontWeight: 800, fontSize: 20, minWidth: 0, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {name}
-              </Typography>
-              <Tooltip title="제목 수정">
-                <IconButton onClick={() => setEditName(true)} sx={{ width: 32, height: 32, flex: 'none', borderRadius: '9px', border: 1, borderColor: 'divider', color: 'text.secondary' }}>
-                  <Box component="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" sx={{ width: 16, height: 16 }}>
-                    <path d="M4 20h4L19 9l-4-4L4 16v4z" />
-                  </Box>
-                </IconButton>
-              </Tooltip>
+      {/* 새 세션: 폰과 같은 항목(모드·언어·이름)을 한 화면에 */}
+      <Dialog open={dlg} onClose={() => setDlg(false)} slotProps={{ paper: { sx: { width: '100%', maxWidth: 480, m: 2, backgroundImage: 'none' } } }}>
+        <Box sx={{ p: '24px 24px 20px', display: 'flex', flexDirection: 'column', gap: 1.25, overflowY: 'auto' }}>
+          <Typography component="h2" sx={{ fontSize: 21, fontWeight: 800, letterSpacing: '-0.015em', mb: 0.75 }}>{t('newSession')}</Typography>
+          <Box role="radiogroup" aria-label={t('newSession')} sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+            <OptionCard Icon={ArrowRightIcon} title={t('modeOneway')} desc={t('modeOnewayDesc')} sel={preset === 'oneway'} onClick={() => setPreset('oneway')} />
+            <OptionCard Icon={SwapIcon} title={t('modeTwoway')} desc={t('modeTwowayDesc')} sel={preset === 'twoway'} onClick={() => setPreset('twoway')} />
+            {/* 안내데스크 권한이 있는 계정만 */}
+            {canDesk && <OptionCard Icon={HeadsetIcon} title={t('deskMode')} desc={t('deskModeDesc')} sel={preset === 'desk'} onClick={() => setPreset('desk')} />}
+          </Box>
+          {preset !== 'desk' && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.25, mt: 0.75 }}>
+              {langs.boxes(preset, t).map((x) => {
+                const v = x.k === 'src' && x.value === 'auto' ? t('autoDetect') : t.lang(x.value);
+                return (
+                  <ButtonBase key={x.k} onClick={() => setLangPick(x)} aria-label={`${x.caption}: ${v}`}
+                    sx={{ height: 66, borderRadius: '16px', border: 2, borderColor: 'divider', flexDirection: 'column', gap: 0.25, px: 1, '&:hover': { borderColor: 'text.disabled' } }}>
+                    <Typography component="span" sx={{ fontSize: 12, fontWeight: 600, color: 'text.secondary' }}>{x.caption}</Typography>
+                    <Typography component="span" noWrap sx={{ fontSize: 16.5, fontWeight: 800, maxWidth: '100%' }}>{v}</Typography>
+                  </ButtonBase>
+                );
+              })}
             </Box>
           )}
-
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, mt: 2 }}>
-            {SITUATIONS.map((p) => <OptionCard key={p.v} p={p} sel={preset === p.v} onClick={() => pickPreset(p.v)} />)}
+          <Box component="label" sx={{ display: 'flex', alignItems: 'center', px: 2, height: 54, mt: 0.75, borderRadius: '16px', bgcolor: (th) => alpha(th.palette.text.primary, 0.04) }}>
+            <InputBase value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} placeholder={namePlaceholder}
+              inputProps={{ 'aria-label': t('sessionName'), maxLength: 80 }} sx={{ flex: 1, fontSize: 16 }} />
           </Box>
-          {/* 안내데스크 — 번역 모드와 성격이 달라 따로 둔다(안내데스크 권한이 있는 계정만) */}
-          {canDesk && (
-            <>
-              <Divider sx={{ my: 2, fontSize: 12, fontWeight: 700, color: 'text.secondary' }}>다른 세션</Divider>
-              <OptionCard p={DESK_OPTION} sel={preset === 'desk'} onClick={() => pickPreset('desk')} />
-            </>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setDlg(false)}>취소</Button>
-          <Button variant="contained" onClick={create}>만들기</Button>
-        </DialogActions>
+          <Box sx={{ display: 'flex', gap: 1, mt: 1.25 }}>
+            <ButtonBase onClick={() => setDlg(false)} sx={{ flex: '0 0 32%', height: 52, borderRadius: '16px', bgcolor: (th) => alpha(th.palette.text.primary, 0.06), fontSize: 15.5, fontWeight: 700 }}>{t('cancel')}</ButtonBase>
+            <ButtonBase onClick={create} disabled={creating} sx={{ flex: 1, height: 52, borderRadius: '16px', bgcolor: BRAND, color: '#fff', fontSize: 15.5, fontWeight: 700, opacity: creating ? 0.6 : 1 }}>{t('create')}</ButtonBase>
+          </Box>
+        </Box>
       </Dialog>
+      <PickSheet open={!!langPick} onClose={() => setLangPick(null)} title={langPick?.caption} value={langPick?.value}
+        options={(langPick?.codes || []).map((c) => ({ code: c, label: c === 'auto' ? t('autoDetect') : t.lang(c) }))}
+        onPick={(v) => langs.pickLang(langPick.k, v)} />
 
-      {/* 제목 변경 */}
-      <Dialog open={!!rename} onClose={() => setRename(null)} PaperProps={{ sx: { width: 400, maxWidth: 400 } }}>
-        <DialogTitle sx={{ fontWeight: 800 }}>제목 변경</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            fullWidth
-            size="small"
-            value={rename?.val || ''}
-            onChange={(e) => setRename((r) => ({ ...r, val: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); }}
-            sx={{ mt: 1 }}
-          />
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setRename(null)}>취소</Button>
-          <Button variant="contained" onClick={saveRename}>저장</Button>
-        </DialogActions>
-      </Dialog>
+      {/* 이름 변경 */}
+      <FormSheet open={!!rename} onClose={() => setRename(null)} title={t('renameShort')} initial={{ title: rename?.val || '' }}
+        fields={[{ key: 'title', label: t('sessionName') }]} onSubmit={async (v) => saveRename(rename.id, v.title)} />
 
       <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
 

@@ -20,16 +20,20 @@ import UpdateSheet, { useAppVersion } from './UpdateSheet.jsx';
 import { Line, Bubble } from './MobileLive.jsx';
 import { ArrowLeftIcon, ChevronRightIcon, LogOutIcon, PlayIcon } from '../shared/icons.jsx';
 import { BRAND, BRAND_SOFT } from '../shared/brand.js';
+import { MOBILE_UI } from '../shared/env.js';
 
 const SlideLeft = forwardRef(function SlideLeft(props, ref) { return <Slide direction="left" ref={ref} {...props} />; });
 const UI_NAMES = { ko: '한국어', en: 'English', ja: '日本語' };
+// PC: 전체 화면 대신 오른쪽 패널(세션 설정 패널과 같은 폭·모서리)
+const PC_PANEL = { m: 0, width: 420, maxWidth: '100%', height: '100%', maxHeight: '100%', borderTopLeftRadius: '24px', borderBottomLeftRadius: '24px' };
 
 // 전체 화면 틀(뒤로 + 제목 + 스크롤 본문)
 export function Screen({ open, onBack, title, children, footer, bg }) {
   const t = useT();
   return (
-    <Dialog fullScreen open={open} onClose={onBack} slots={{ transition: SlideLeft }}
-      slotProps={{ paper: { sx: { borderRadius: 0, border: 0, backgroundImage: 'none', bgcolor: (th) => (bg ? (bg === 'background.default' ? th.palette.background.default : bg) : th.palette.mode === 'dark' ? th.palette.background.default : '#F4F3EF') } } }}>
+    <Dialog fullScreen={MOBILE_UI} open={open} onClose={onBack} slots={{ transition: SlideLeft }}
+      {...(MOBILE_UI ? {} : { sx: { '& .MuiDialog-container': { justifyContent: 'flex-end', alignItems: 'stretch' } } })}
+      slotProps={{ paper: { sx: { borderRadius: 0, border: 0, backgroundImage: 'none', bgcolor: (th) => (bg ? (bg === 'background.default' ? th.palette.background.default : bg) : th.palette.mode === 'dark' ? th.palette.background.default : '#F4F3EF'), ...(MOBILE_UI ? {} : PC_PANEL) } } }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, pt: 'calc(12px + env(safe-area-inset-top))', pb: 0.5, flex: 'none' }}>
         <IconButton onClick={onBack} aria-label={t('back')} sx={{ width: 48, height: 48 }}><ArrowLeftIcon /></IconButton>
         <Typography component="h1" sx={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.015em' }}>{title}</Typography>
@@ -81,7 +85,7 @@ function Avatar({ user, size = 48 }) {
   );
 }
 
-export function OptionsScreen({ open, onBack, user, onAccount, onLogout }) {
+export function OptionsScreen({ open, onBack, user, onAccount, onLogout, extra }) {
   const t = useT();
   const prefs = usePrefs();
   const [pick, setPick] = useState(null); // 'sys' | 'native' | 'voice' | 'theme' | 'size' | 'update'
@@ -154,6 +158,8 @@ export function OptionsScreen({ open, onBack, user, onAccount, onLogout }) {
           </Box>
         </Group>
       )}
+
+      {extra}
 
       <Group>
         <OptionRow label={t('logout')} danger icon={<LogOutIcon sx={{ color: 'error.main', fontSize: 21 }} />} onClick={() => setLogoutAsk(true)} />

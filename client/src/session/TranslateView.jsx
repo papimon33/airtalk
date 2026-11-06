@@ -37,6 +37,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
+import ButtonBase from '@mui/material/ButtonBase';
+import { BRAND } from '../shared/brand.js';
+import { ArrowLeftIcon, DownloadIcon, QrIcon, SettingsIcon } from '../shared/icons.jsx';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
@@ -53,7 +56,6 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import ConfirmDialog from '../shared/ConfirmDialog.jsx';
 import MobileLive from '../phone/MobileLive.jsx';
 import { setPref } from '../shared/prefs.js';
-import { PC_V2 } from '../shared/env.js';
 import { can, setRecordingFlag } from '../shared/authState.js';
 import { api } from '../shared/api.js';
 
@@ -76,7 +78,7 @@ const OUT4 = [
   { code: 'ja', label: '日本語' },
   { code: 'zh', label: '中文' },
 ];
-// Soniox stt-rt-v5 지원 언어 전체(60) — 한·영·일·중을 상단에, 나머지는 가나다순
+// Soniox stt-rt-v6 지원 언어 전체(60) — 한·영·일·중을 상단에, 나머지는 가나다순
 export const SX_LANGS = [
   ...OUT4,
   { code: 'el', label: '그리스어' }, { code: 'nl', label: '네덜란드어' }, { code: 'no', label: '노르웨이어' },
@@ -166,6 +168,9 @@ function Field({ label, children }) {
   );
 }
 
+// 안내데스크 화면 버튼 — 폰 세션 화면과 같은 모양
+const TOP_BTN = { width: 40, height: 40, borderRadius: '12px', color: 'text.primary', flex: 'none' };
+const BAR_BTN = { pointerEvents: 'auto', height: 52, px: 3.25, borderRadius: '16px', fontSize: 15.5, fontWeight: 700 };
 const selSx = { '& .MuiSelect-select': { py: 0.85 }, bgcolor: 'background.paper' };
 
 // 읽기 전용(잠금) 값 표시 — 오디오 소스·출력 언어 등
@@ -1054,8 +1059,8 @@ export default function TranslateView({ session: initial, onBack, mobile = false
     </>
   );
 
-  // PC 새 화면(?ui=v2): 실시간 번역·양방향 세션은 폰과 같은 세션 화면(PC 배치 + PC 전용 줄). 데스크·구 파이프라인은 기존 화면.
-  const pcV2 = PC_V2 && !mobile && cfg.pipeline === 'soniox';
+  // 실시간 번역·양방향 세션은 폰과 PC 모두 같은 세션 화면(PC 는 PC 배치 + PC 전용 줄). 안내데스크는 아래 화면.
+  const pcV2 = !mobile && cfg.pipeline === 'soniox';
   if (mobile || pcV2) {
     const toggleTts = () => {
       const v = !ttsOn;
@@ -1142,8 +1147,8 @@ export default function TranslateView({ session: initial, onBack, mobile = false
     <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {/* 타이틀 바 — 모바일은 여백·간격 축소 */}
       <Box sx={{ px: { xs: 1.25, sm: 3 }, pt: { xs: 1.25, sm: 2 }, pb: { xs: 1, sm: 1.5 }, display: 'flex', alignItems: 'center', gap: { xs: 0.75, sm: 1.5 } }}>
-        <IconButton onClick={onBack} sx={{ width: 38, height: 38, borderRadius: '10px', border: 1, borderColor: 'divider', color: 'text.secondary' }}>
-          <Box component="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" sx={{ width: 20, height: 20 }}><path d="M15 6l-6 6 6 6" /></Box>
+        <IconButton onClick={onBack} aria-label="뒤로" sx={{ ...TOP_BTN, ml: -0.5 }}>
+          <ArrowLeftIcon />
         </IconButton>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           {/* overflow hidden — 좁은 폭에서 모드 칩이 우측 버튼들 밑으로 겹쳐 보이던 문제 */}
@@ -1182,21 +1187,21 @@ export default function TranslateView({ session: initial, onBack, mobile = false
         )}
         {isElectron && (
           <Tooltip title="줌 위에 오버레이 창 열기">
-            <IconButton onClick={openOverlay} sx={{ border: 1, borderColor: 'divider' }}>
+            <IconButton onClick={openOverlay} sx={TOP_BTN}>
               <PictureInPictureAltIcon />
             </IconButton>
           </Tooltip>
         )}
         <Tooltip title="내보내기 — 지금까지의 대화를 텍스트 파일로 저장합니다">
           <span>
-            <IconButton onClick={downloadTranscript} disabled={messages.length === 0} sx={{ border: 1, borderColor: 'divider' }}>
-              <FileDownloadOutlinedIcon />
+            <IconButton onClick={downloadTranscript} disabled={messages.length === 0} aria-label="내보내기" sx={TOP_BTN}>
+              <DownloadIcon />
             </IconButton>
           </span>
         </Tooltip>
         <Tooltip title="링크 공유">
-          <IconButton onClick={() => setQrOpen(true)} sx={{ border: 1, borderColor: 'divider' }}>
-            <QrCode2Icon />
+          <IconButton onClick={() => setQrOpen(true)} aria-label="링크 공유" sx={TOP_BTN}>
+            <QrIcon />
           </IconButton>
         </Tooltip>
         {cfg.pipeline === 'desk' && (
@@ -1207,16 +1212,17 @@ export default function TranslateView({ session: initial, onBack, mobile = false
                 if (cur) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch {} }
                 else { const el = document.documentElement; const fn = el.requestFullscreen || el.webkitRequestFullscreen; if (fn) try { fn.call(el); } catch {} }
               }}
-              sx={{ border: 1, borderColor: 'divider' }}
+              aria-label="전체화면 전환"
+              sx={TOP_BTN}
             >
               <FullscreenIcon />
             </IconButton>
           </Tooltip>
         )}
-        {(cfg.pipeline === 'soniox' || cfg.pipeline === 'desk') && (
+        {cfg.pipeline === 'desk' && (
           <Tooltip title="고급 설정">
-            <IconButton onClick={() => setSxSettingsOpen(true)} sx={{ border: 1, borderColor: 'divider' }}>
-              <TuneIcon />
+            <IconButton onClick={() => setSxSettingsOpen(true)} aria-label="고급 설정" sx={TOP_BTN}>
+              <SettingsIcon />
             </IconButton>
           </Tooltip>
         )}
@@ -1227,7 +1233,7 @@ export default function TranslateView({ session: initial, onBack, mobile = false
         <Collapse in={optsOpen}>
         <Paper variant="outlined" sx={{ borderRadius: 1.5, bgcolor: (t) => alpha(t.palette.text.primary, 0.015), overflow: 'hidden' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1.25, sm: 2 }, flexWrap: 'wrap', px: { xs: 1, sm: 1.5 }, py: 1, pr: { xs: 5, sm: 7 } }}>
-          {cfg.pipeline !== 'desk' && cfg.pipeline !== 'soniox' && !nativeApp && (
+          {cfg.pipeline !== 'desk' && !nativeApp && (
             <Field label="오디오 소스">
               <Select size="small" value={sourceMode} disabled={recording} onChange={(e) => setSourceMode(e.target.value)} sx={{ ...selSx, minWidth: 120 }}>
                 {SRC.map((s) => (
@@ -1320,62 +1326,8 @@ export default function TranslateView({ session: initial, onBack, mobile = false
               </Select>
             </Field>
           )}
-          {cfg.pipeline === 'soniox' && preset && messages.length === 0 && (
-            <Field label="모드">
-              <Select size="small" value={presetGroup} disabled={recording} onChange={(e) => changeMode(e.target.value)} sx={{ ...selSx, minWidth: 125 }}>
-                <MenuItem value="oneway">실시간 번역</MenuItem>
-                <MenuItem value="twoway">양방향 통역</MenuItem>
-              </Select>
-            </Field>
-          )}
-          {cfg.pipeline === 'soniox' && preset && !nativeApp && (
-            <Field label="음성 입력">
-              <Select size="small" value={srcOpts.includes(sourceMode) ? sourceMode : 'mic'} disabled={recording} onChange={(e) => changeSource(e.target.value)} sx={{ ...selSx, minWidth: 150 }}>
-                <MenuItem value="mic">마이크</MenuItem>
-                {onewayPreset
-                  ? <MenuItem value="system">시스템</MenuItem>
-                  : <MenuItem value="both">시스템 + 마이크</MenuItem>}
-              </Select>
-            </Field>
-          )}
           {/* 언어는 상단 옵션에서 바로 — 입력 언어(실시간)·내 언어(양방향)도 고급 설정에서 꺼냈다(2026-10-20). 음성 성별만 고급 설정. */}
-          {cfg.pipeline === 'soniox' && sxMode === 'one' && (
-            <Field label="입력 언어">
-              <Select size="small" value={cfg.inLang} disabled={recording} onChange={(e) => patch({ inLang: e.target.value })} sx={{ ...selSx, minWidth: 120 }} MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}>
-                {LANGS.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
-              </Select>
-            </Field>
-          )}
-          {cfg.pipeline === 'soniox' && sxMode === 'two' && (
-            <Field label="내 언어">
-              <Select size="small" value={sxA} disabled={recording} onChange={(e) => { setSxA(e.target.value); savePair(e.target.value, sxB); }} sx={{ ...selSx, minWidth: 120 }} MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}>
-                {SX_LANGS.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
-              </Select>
-            </Field>
-          )}
-          {cfg.pipeline === 'soniox' && sxMode === 'one' && (
-            <Field label="출력 언어">
-              <Select size="small" value={sxTarget} disabled={recording} onChange={(e) => { setSxTarget(e.target.value); try { localStorage.setItem('kac-sx-target', e.target.value); localStorage.setItem('kac-sx-target:' + initial.id, e.target.value); } catch {} }} sx={{ ...selSx, minWidth: 120 }} MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}>
-                {SX_LANGS.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
-              </Select>
-            </Field>
-          )}
-          {cfg.pipeline === 'soniox' && sxMode === 'two' && (
-            <Field label="상대 언어">
-              <Select size="small" value={sxB} disabled={recording} onChange={(e) => { setSxB(e.target.value); savePair(sxA, e.target.value); }} sx={{ ...selSx, minWidth: 120 }} MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}>
-                {SX_LANGS.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
-              </Select>
-            </Field>
-          )}
-          {cfg.pipeline === 'soniox' && ttsAllowed && (
-            <InfoToggle
-              label="TTS"
-              hint="번역된 문장을 음성으로 읽어줍니다. 번역 중에도 켜고 끌 수 있습니다. 음성은 고급 설정에서 고릅니다. (시스템 음성을 번역할 때는 그 음성이 다시 인식되므로 사용할 수 없습니다)"
-              checked={ttsOn}
-              onChange={(e) => { const v = e.target.checked; setTtsOn(v); localStorage.setItem('kac-sx-tts', v ? '1' : '0'); if (recRef.current && recRef.current.setTts) recRef.current.setTts(v, gender, !ttsViewerOnly); }}
-            />
-          )}
-          {cfg.pipeline !== 'soniox' && cfg.pipeline !== 'desk' && (
+          {cfg.pipeline !== 'desk' && (
             <Field label="출력 언어">
               <Select
                 size="small"
@@ -1435,23 +1387,6 @@ export default function TranslateView({ session: initial, onBack, mobile = false
 
 
           {/* 실시간 번역: 사용할 마이크 장치 선택(녹음 중엔 변경 불가 — 다음 시작부터 적용) */}
-          {cfg.pipeline === 'soniox' && !window.AndroidAudio && sourceMode !== 'system' && (
-            <Field label="마이크">
-              <Tooltip title={recording ? '녹음 중에는 변경할 수 없습니다(중지 후 변경)' : '사용할 마이크 장치를 선택합니다'}>
-                <span>
-                  <Select
-                    size="small" displayEmpty disabled={recording}
-                    value={micDevs.some((d) => d.deviceId === micId) ? micId : ''}
-                    onChange={(e) => { setMicId(e.target.value); localStorage.setItem('kac-mic-device', e.target.value); }}
-                    sx={{ ...selSx, minWidth: 140, maxWidth: 200 }}
-                  >
-                    <MenuItem value="">기본 마이크</MenuItem>
-                    {micDevs.map((d, i) => (<MenuItem key={d.deviceId || i} value={d.deviceId}>{d.label || `마이크 ${i + 1}`}</MenuItem>))}
-                  </Select>
-                </span>
-              </Tooltip>
-            </Field>
-          )}
           <Box sx={{ flex: 1 }} />
           {sourceMode !== 'system' && (
             <Field label={stereoInfo && stereoInfo.state === 'stereo' ? '마이크 입력 · 2채널(나/상대)' : '마이크 입력'}>
@@ -1513,7 +1448,7 @@ export default function TranslateView({ session: initial, onBack, mobile = false
               // 않도록 보유 텍스트로 폴백. whisper 는 선택 언어만(대체 X).
               let t = m.texts ? m.texts[dispLang] || '' : '';
               let usedLang = dispLang;
-              if (!t && (cfg.pipeline === 'translate' || cfg.pipeline === 'soniox') && m.texts) {
+              if (!t && cfg.pipeline === 'translate' && m.texts) {
                 const keys = Object.keys(m.texts);
                 if (keys.length) { usedLang = keys[0]; t = m.texts[usedLang]; }
               }
@@ -1566,21 +1501,20 @@ export default function TranslateView({ session: initial, onBack, mobile = false
                   variant="filled"
                   sx={{ pointerEvents: 'auto', fontWeight: 800, fontSize: 14, py: 2, px: 1, boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}
                 />
-                <Button onClick={() => recRef.current && recRef.current.deskReset && recRef.current.deskReset()} variant="outlined"
-                  sx={{ pointerEvents: 'auto', px: 2.5, py: 1.25, borderRadius: 2.5, fontSize: 14, fontWeight: 700, bgcolor: 'background.paper', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
+                <ButtonBase onClick={() => recRef.current && recRef.current.deskReset && recRef.current.deskReset()}
+                  sx={{ ...BAR_BTN, bgcolor: 'background.paper', color: 'text.primary', border: 1, borderColor: 'divider' }}>
                   대기모드로
-                </Button>
+                </ButtonBase>
               </>
             ) : (
               <>
                 <Select size="small" value={hostLang} onChange={(e) => setHostLang(e.target.value)}
-                  sx={{ pointerEvents: 'auto', bgcolor: 'background.paper', borderRadius: 2, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', '& .MuiSelect-select': { py: 1 } }}>
+                  sx={{ pointerEvents: 'auto', height: 52, fontWeight: 700, bgcolor: 'background.paper', borderRadius: '16px', boxShadow: '0 6px 18px rgba(0,0,0,0.12)' }}>
                   {DESK_LANGS.map((l) => (<MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>))}
                 </Select>
-                <Button onClick={deskManualStart} variant="contained" disableElevation
-                  sx={{ pointerEvents: 'auto', px: 3, py: 1.25, borderRadius: 2.5, fontSize: 15, fontWeight: 700, boxShadow: '0 8px 24px rgba(0,0,0,0.28)' }}>
+                <ButtonBase onClick={deskManualStart} sx={{ ...BAR_BTN, bgcolor: BRAND, color: '#fff', boxShadow: '0 6px 18px rgba(91,79,232,0.35)' }}>
                   통역 시작
-                </Button>
+                </ButtonBase>
               </>
             )
           ) : (
@@ -1601,26 +1535,9 @@ export default function TranslateView({ session: initial, onBack, mobile = false
                   {micMuted ? '발화 시작' : '발화 멈춤'}
                 </Button>
               )}
-              <Button
-                onClick={recording ? stop : start}
-                disableElevation
-                startIcon={
-                  recording ? (
-                    <Box sx={{ width: 9, height: 9, borderRadius: '2px', bgcolor: '#ff5a5f', animation: `${pulse} 1.6s infinite` }} />
-                  ) : (
-                    <Box sx={{ width: 0, height: 0, borderStyle: 'solid', borderWidth: '5px 0 5px 8px', borderColor: (t) => `transparent transparent transparent ${t.palette.mode === 'dark' ? '#111' : '#fff'}` }} />
-                  )
-                }
-                sx={{
-                  pointerEvents: 'auto', px: 3.5, py: 1.25, borderRadius: 2.5, fontSize: 15, fontWeight: 700,
-                  color: (t) => (t.palette.mode === 'dark' ? '#111' : '#fff'),
-                  bgcolor: (t) => (t.palette.mode === 'dark' ? '#fff' : '#111'),
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
-                  '&:hover': { bgcolor: (t) => (t.palette.mode === 'dark' ? '#e8e8e8' : '#000') },
-                }}
-              >
+              <ButtonBase onClick={recording ? stop : start} sx={{ ...BAR_BTN, bgcolor: BRAND, color: '#fff', boxShadow: '0 6px 18px rgba(91,79,232,0.35)' }}>
                 {recording ? '중지' : '시작'}
-              </Button>
+              </ButtonBase>
             </>
           )}
         </Box>
