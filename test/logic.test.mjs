@@ -3,9 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  kstDay, CONFFIX, confFixTrigger, confFixMark, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk,
+  kstDay, CONFFIX, confFixTrigger, confFixMark, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
 } from '../server/util/pipeline_util.js';
-import { langJudge } from '../server/vendors/soniox.js';
 
 /* ── confFix 트리거: 연속 2+ 저신뢰(<0.4) 또는 극단 단발(≤0.12), 실단어 ≥3, 저신뢰 비율 ≤70% ── */
 

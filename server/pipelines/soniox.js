@@ -4,10 +4,10 @@ import { SONIOX_API_KEY, SONIOX_MODEL, SONIOX_LANGS, CARTESIA_API_KEY, SX_MAX_FA
 import { saveSessions, recordTts } from '../store/index.js';
 import { newId } from '../store/sessions.js';
 import { getRoom, broadcast, broadcastAudio, hasAudioListener, sendAudioToHosts, noteTts, isSelfEcho } from '../realtime/rooms.js';
-import { openSonioxWs, buildSonioxContext, langJudge, flipHold, speechWeight, endsSentence, stripSentenceEnd } from '../vendors/soniox.js';
+import { openSonioxWs, buildSonioxContext } from '../vendors/soniox.js';
 import { cartesiaVoiceId, cartesiaTTSStream, cartesiaWarmup } from '../vendors/cartesia.js';
 import { echoNorm, echoMatch } from '../util/security_util.js';
-import { isAckOnly, stripFillers } from '../util/pipeline_util.js';
+import { isAckOnly, stripFillers, langJudge, flipHold, speechWeight, endsSentence, stripSentenceEnd } from '../util/pipeline_util.js';
 
 /* ---------- Soniox 실시간 전사·번역(SONIOX_MODEL) -> gpt 다듬기 ---------- */
 const CARRY_MAX = 8;     // 이보다 짧은 첫마디만 다음 말과 합친다

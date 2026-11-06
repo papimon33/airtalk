@@ -5,9 +5,9 @@ import { SONIOX_API_KEY, SONIOX_MODEL, SONIOX_LANGS, SX_MAX_FAILS, sxRetryDelay 
 import { saveSessions } from '../store/index.js';
 import { newId, capDeskLog } from '../store/sessions.js';
 import { rooms, deskCtrl, getRoom, broadcast } from '../realtime/rooms.js';
-import { openSonioxWs, buildSonioxContext, langJudge, flipHold, speechWeight, stripSentenceEnd } from '../vendors/soniox.js';
+import { openSonioxWs, buildSonioxContext } from '../vendors/soniox.js';
 import { echoNorm, echoMatch } from '../util/security_util.js';
-import { isAckOnly, stripFillers } from '../util/pipeline_util.js';
+import { isAckOnly, stripFillers, langJudge, flipHold, speechWeight, stripSentenceEnd } from '../util/pipeline_util.js';
 
 /* ---- 데스크 2마이크(PC 호스트): 여객 마이크 오디오 공급 전용 연결 ----
    호스트 PC 가 지향성 마이크 2대를 직접 잡아 두 번째 장치를 src=guestmic 연결로 스트리밍한다.

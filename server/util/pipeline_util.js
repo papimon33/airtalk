@@ -147,3 +147,83 @@ export function deskCtlAllowed(ws, room, micOnly, now = Date.now()) {
   }
   return true;
 }
+
+/* 발화 언어 판정(양방향·채널 분리 공용). 예전엔 응답마다 비확정 토큰까지 다시 세서, 초기 오판(일본어 'スマートフォン…'을
+   처음엔 한국어 '스마트폰…'으로 들음)이 수십 번 반복 집계돼 확정된 정답을 이겼다 — 카드가 '한국어 발화'로 저장되고 번역 칸(ja)에
+   한국어 문장이 들어가 뷰어에 뒤집혀 보였다(2026-10-21 모노 양방향 측정에서 재현).
+   우선순위: ① 확정 번역 토큰의 source_language — 엔진이 실제로 번역한 방향이라 카드의 번역 칸과 항상 맞는다
+   ② 확정 원문 토큰 다수결 ③ 아직 확정이 없으면 이번 응답의 비확정 토큰 다수결(누적하지 않음). 동률이면 직전 판정 유지. */
+export function langJudge() {
+  let votes = {}, trVotes = {}, resp = {};
+  const lg = (x) => (x ? String(x).split('-')[0].toLowerCase() : '');
+  const lead = (m, prev) => { let best = prev && m[prev] ? prev : ''; for (const k of Object.keys(m)) if (!best || m[k] > (m[best] || 0)) best = k; return best; };
+  return {
+    reset() { votes = {}; trVotes = {}; resp = {}; },
+    begin() { resp = {}; }, // 응답 하나 시작 — 비확정 토큰은 응답마다 다시 오므로 그 응답 안에서만 센다
+    token(t) {
+      // 번역 토큰은 글자 수로 센다. 마지막 값을 믿으면 다음 사람의 첫 단어가 카드 끝에 붙었을 때
+      // 카드 전체의 언어가 그 단어를 따라 뒤집힌다(v6 에서 "…일치합니다. 大変。" 이 일본어 카드가 됨)
+      if (t.translation_status === 'translation') { if (t.is_final && t.source_language) { const k = lg(t.source_language); trVotes[k] = (trVotes[k] || 0) + [...String(t.text || '')].length; } return; }
+      const l = lg(t.language);
+      if (!l) return;
+      if (t.is_final) votes[l] = (votes[l] || 0) + 1; else resp[l] = (resp[l] || 0) + 1;
+    },
+    pick(prev) {
+      if (Object.keys(trVotes).length) return lead(trVotes, prev);
+      if (Object.keys(votes).length) return lead(votes, prev);
+      if (Object.keys(resp).length) return lead(resp, prev);
+      return prev;
+    },
+  };
+}
+
+/* 말의 양 — 한글·한자·가나는 글자 하나가 1, 라틴 문자는 단어 길이가 길어 0.4 로 센다(부호·공백 제외). */
+export const speechWeight = (s) => {
+  let w = 0;
+  for (const c of String(s || '').match(/[\p{L}\p{N}]/gu) || []) w += c.charCodeAt(0) < 128 ? 0.4 : 1;
+  return w;
+};
+const SENT_END_RE = /[.!?。！？…]["'”’)\]]*\s*$/;
+export const endsSentence = (s) => SENT_END_RE.test(String(s || ''));
+export const stripSentenceEnd = (s) => String(s || '').replace(/[.!?。！？…]+\s*$/, '');
+
+const FLIP_MIN_CARD = 4;   // 앞 카드의 말이 이보다 적으면 첫 단어 오인식일 수 있어 나누지 않는다(다수결이 바로잡음)
+const FLIP_READY = 12;     // 문장이 안 끝나도 이만큼 이어지면 문장 속 외국어가 아니라 다음 사람의 말로 본다
+
+/* 양방향(마이크 1개)에서 다음 사람의 말이 앞 카드에 붙지 않게 잡아 두는 곳.
+   엔진은 원문을 언어가 하나인 덩어리로 확정하고 번역을 바로 뒤에 보내지만 <end> 는 늦을 수 있다(2026-11 v6 실측).
+   카드 언어와 다른 확정 원문은 카드에 넣지 않고 여기 모은다.
+   · 카드 언어로 돌아오면 문장 속 외국어였던 것 → 카드에 되돌린다(drain 후 호출부가 이어 붙임)
+   · <end>·문장 끝·충분한 길이(ready) → 다음 사람의 말 → 앞 카드를 확정하고 새 카드로 옮긴다 */
+export function flipHold(langs) {
+  const lg = (x) => (x ? String(x).split('-')[0].toLowerCase() : '');
+  let lang = '', text = '', trans = '', toks = [], raw = [], speaker = '';
+  const reset = () => { lang = ''; text = ''; trans = ''; toks = []; raw = []; speaker = ''; };
+  const list = () => (typeof langs === 'function' ? langs() : langs); // 안내데스크는 응대 중 언어가 정해진다
+  const other = (l, curSrc, curText) => !!l && !!curSrc && l !== curSrc && list().includes(l) && speechWeight(curText) >= FLIP_MIN_CARD;
+  return {
+    active: () => !!lang,
+    lang: () => lang,
+    text: () => text,
+    trans: () => trans,
+    other: (t, curSrc, curText) => other(lg(t.translation_status === 'translation' ? t.source_language : t.language), curSrc, curText),
+    // 확정 원문: 잡아 뒀으면 true. 언어 표시가 없는 토큰(부호 등)은 잡아 둔 말에 이어 붙인다.
+    takeSource(t, curSrc, curText) {
+      const l = lg(t.language);
+      if (lang ? (l && l !== lang) : !other(l, curSrc, curText)) return false;
+      lang = lang || l;
+      text += t.text;
+      raw.push(t);
+      if (t.text.trim()) toks.push([t.text, typeof t.confidence === 'number' ? Math.round(t.confidence * 100) / 100 : null]);
+      if (t.speaker != null && t.speaker !== '') speaker = t.speaker;
+      return true;
+    },
+    takeTrans(t) {
+      if (!lang || lg(t.source_language) !== lang) return false;
+      trans += t.text;
+      return true;
+    },
+    ready: () => !!lang && (endsSentence(text) || speechWeight(text) >= FLIP_READY),
+    drain() { const h = { lang, text, trans, toks, raw, speaker }; reset(); return h; },
+  };
+}
