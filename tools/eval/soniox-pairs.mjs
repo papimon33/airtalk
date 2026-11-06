@@ -31,7 +31,7 @@ if (!KEY) { console.error('❌ SONIOX_API_KEY 없음 — .env에 넣거나 환�
 if (typeof WebSocket === 'undefined') { console.error('❌ 이 node에 전역 WebSocket 없음 — node 18+ 필요.'); process.exit(1); }
 
 const baseCfg = {
-  model: 'stt-rt-v5', audio_format: 'pcm_s16le', sample_rate: 24000, num_channels: 1,
+  model: 'stt-rt-v6', audio_format: 'pcm_s16le', sample_rate: 24000, num_channels: 1,
   enable_language_identification: true, enable_endpoint_detection: true,
 };
 

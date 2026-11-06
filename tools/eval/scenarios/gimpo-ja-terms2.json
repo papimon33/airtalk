@@ -1,0 +1,19 @@
+[
+  {"category":"etc","mode":"pair","names":{"ko":"한국공항공사","ja":"韓国空港公社","en":"Korea Airports Corporation"}},
+  {"category":"facility","mode":"pair","names":{"ko":"김포공항","ja":"金浦空港","en":"Gimpo International Airport"}},
+  {"category":"facility","mode":"pair","names":{"ko":"김포","ja":"金浦","en":"Gimpo"}},
+  {"category":"facility","mode":"pair","names":{"ko":"하네다공항","ja":"羽田空港","en":"Haneda Airport"}},
+  {"category":"facility","mode":"pair","names":{"ko":"하네다","ja":"羽田","en":"Haneda"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"셀프 백드롭","ja":"セルフバッグドロップ","en":"self bag drop"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"자동 수하물 위탁기","ja":"自動手荷物預け機","en":"automated bag drop machine"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"수하물 처리 시스템","ja":"手荷物搬送システム","en":"baggage handling system"}},
+  {"category":"etc","mode":"pair","names":{"ko":"생체정보","ja":"生体情報","en":"biometric data"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"안면인식 탑승","ja":"顔認証搭乗","en":"facial recognition boarding"}},
+  {"category":"facility","mode":"pair","names":{"ko":"출국장","ja":"出国エリア","en":"departure area"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"자동 게이트","ja":"自動化ゲート","en":"automated gate"}},
+  {"category":"facility","mode":"pair","names":{"ko":"보안검색장","ja":"保安検査場","en":"security checkpoint"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"수하물 검색","ja":"手荷物検査","en":"baggage screening"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"정밀 검색","ja":"精密検査","en":"secondary screening"}},
+  {"category":"aviation","mode":"pair","names":{"ko":"엑스레이 판독","ja":"X線画像判読","en":"X-ray image analysis"}},
+  {"category":"etc","mode":"pair","names":{"ko":"시간당","ja":"1時間あたり","en":"per hour"}}
+]

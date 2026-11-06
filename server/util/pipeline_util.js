@@ -81,6 +81,13 @@ export function stripFillers(text) {
    기계 번역에 없던 한글이 생기거나(목표가 한국어가 아닐 때), 중국어인데 번체 전용 글자가 생기면 다듬기를 버린다. */
 const HANGUL = /[\uAC00-\uD7A3]/;
 const ZH_TRAD = /[這們個說會對為與關於運營報內開發業務數據機場資訊處現進過還讓統點體號時間長門東車電話經實際從後當種樣檢區國標準輸繼續認識讀寫導應]/;
+/* 다듬기 결과 길이 검사: 해설이 섞여 크게 늘었거나, 내용이 빠져 크게 줄었으면 기계 번역을 유지한다.
+   짧은 문장은 자연스럽게 고치면서 많이 줄 수 있으니(31자 → 18자) 40자 이상일 때만 줄어든 비율을 본다. */
+export function polishLengthOk(out, raw) {
+  if (out.length > raw.length * 3 + 20) return false;
+  return raw.length < 40 || out.length >= raw.length * 0.6;
+}
+
 export function langScriptOk(out, raw, lang) {
   const s = String(out || ''), r = String(raw || '');
   if (lang !== 'ko' && HANGUL.test(s) && !HANGUL.test(r)) return false;

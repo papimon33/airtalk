@@ -90,7 +90,7 @@ function transcribe(pcmBuf) {
     const guard = setTimeout(finish, 20000);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
-      ws.send(JSON.stringify({ model: 'stt-rt-v5', audio_format: 'pcm_s16le', sample_rate: RATE, num_channels: 1, enable_language_identification: true, enable_endpoint_detection: true, language_hints: ['ko'] }));
+      ws.send(JSON.stringify({ model: 'stt-rt-v6', audio_format: 'pcm_s16le', sample_rate: RATE, num_channels: 1, enable_language_identification: true, enable_endpoint_detection: true, language_hints: ['ko'] }));
       let off = 0; const chunk = 4800;
       const iv = setInterval(() => { if (off >= pcmBuf.length) { clearInterval(iv); try { ws.send(''); } catch {} return; } ws.send(pcmBuf.subarray(off, off + chunk)); off += chunk; }, 100);
     };

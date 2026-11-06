@@ -1,15 +1,19 @@
 /* 실시간 번역(soniox) 파이프라인 — 단방향/양방향·채널 분리·자동 언어 잠금·실시간 TTS·저신뢰 교정.
    handleHost(realtime/host.js)가 연결마다 runSoniox(h) 를 호출한다. h = 연결 컨텍스트(구 handleHost 클로저 값). */
-import { SONIOX_API_KEY, SONIOX_LANGS, CARTESIA_API_KEY, SX_MAX_FAILS, sxRetryDelay } from '../config.js';
+import { SONIOX_API_KEY, SONIOX_MODEL, SONIOX_LANGS, CARTESIA_API_KEY, SX_MAX_FAILS, sxRetryDelay } from '../config.js';
 import { saveSessions, recordTts } from '../store/index.js';
 import { newId } from '../store/sessions.js';
 import { getRoom, broadcast, broadcastAudio, hasAudioListener, sendAudioToHosts, noteTts, isSelfEcho } from '../realtime/rooms.js';
-import { openSonioxWs, buildSonioxContext, langJudge } from '../vendors/soniox.js';
+import { openSonioxWs, buildSonioxContext, langJudge, flipHold, speechWeight, endsSentence, stripSentenceEnd } from '../vendors/soniox.js';
 import { cartesiaVoiceId, cartesiaTTSStream, cartesiaWarmup } from '../vendors/cartesia.js';
 import { echoNorm, echoMatch } from '../util/security_util.js';
 import { isAckOnly, stripFillers } from '../util/pipeline_util.js';
 
-/* ---------- Soniox stt-rt-v5 (전사) -> gpt 번역 [테스트] ---------- */
+/* ---------- Soniox 실시간 전사·번역(SONIOX_MODEL) -> gpt 다듬기 ---------- */
+const CARRY_MAX = 8;     // 이보다 짧은 첫마디만 다음 말과 합친다
+const CARRY_MS = 1800;   // 첫마디 뒤 이만큼 말이 없으면 그대로 확정
+const LONG_CARD = 120;   // 이만큼 쌓이면 문장 끝에서 카드를 나눈다
+
 export function runSoniox(h) {
   const { ws, sessionId, session, pipeline, inLang, idle, toHost, liveSend, upsertItem, polishCommit, maybeConfFix, bumpIdle } = h;
   if (!SONIOX_API_KEY) {
@@ -42,7 +46,7 @@ export function runSoniox(h) {
   // 잠기면 힌트·context 를 그 언어로 좁혀 1회 재연결한다(아래 lockDetected).
   let lockedIn = null;
   const buildConfig = () => ({
-    model: 'stt-rt-v5',
+    model: SONIOX_MODEL,
     audio_format: 'pcm_s16le',
     sample_rate: 24000,
     num_channels: 1,
@@ -107,7 +111,12 @@ export function runSoniox(h) {
   const langVotes = langJudge(); // 발화 언어 판정(확정 번역의 source_language → 확정 원문 다수결)
   let curSpeaker = '';  // 현재 발화 화자(diarization)
   let lastCommitText = ''; // 직전 확정 텍스트(연속 중복 카드 방지)
-  let lastCommitted = null; // { id, key, out, at } — 화자 변경 커밋 직후 늦게 도착한 번역 꼬리를 직전 카드에 귀속
+  let lastCommitted = null; // { id, key, out, at, src } — 커밋 직후 늦게 도착한 번역 꼬리를 직전 카드에 귀속
+  const hold = flipHold(sxMode === 'two' ? [sxA, sxB] : []); // 양방향: 다음 사람의 말을 앞 카드에 붙이지 않고 잡아 둠
+  let heldId = null;       // 잡아 둔 말을 보여 주는 진행 중 카드
+  let flipStarted = false; // 지금 카드가 잡아 둔 말에서 시작됐는지
+  let carryTimer = null;   // <end> 에 끊긴 짧은 첫마디: 말이 이어지면 합치고, 없으면 잠시 뒤 확정
+  let carrying = false;
   let lastCommitAt = 0;    // 직전 확정 시각 — 중복 판정은 5초 창 안에서만
   let sawSpeaker = false;  // 엔진이 화자 정보를 한 번이라도 반환했는지(진단용)
   let spkNotified = false; // 화자 감지 1회 알림
@@ -207,6 +216,35 @@ export function runSoniox(h) {
     for (const s of out) speakTts(s, curId);
   };
 
+  const stopCarry = () => { carrying = false; if (carryTimer) { clearTimeout(carryTimer); carryTimer = null; } };
+  // 잡아 둔 말로 새 카드를 시작한다(앞 카드는 호출 전에 확정)
+  const startHeldCard = () => {
+    const h = hold.drain();
+    curId = heldId || newId();
+    heldId = null;
+    finalText = h.text.trimStart();
+    finalTrans = h.trans.trimStart();
+    lastTrans = finalTrans;
+    curSrc = h.lang;
+    curSpeaker = h.speaker;
+    srcToks = h.toks;
+    h.raw.forEach((t) => langVotes.token(t));
+    utterTm = { s: Date.now() };
+    flipStarted = true;
+    ttsLang = targetKeyFor(curSrc);
+    ttsPending = finalTrans;
+  };
+  // 잡아 뒀던 말이 문장 속 외국어였다 → 지금 카드에 되돌린다
+  const returnHeld = () => {
+    const h = hold.drain();
+    finalText += h.text;
+    finalTrans += h.trans;
+    ttsPending += h.trans;
+    srcToks.push(...h.toks);
+    h.raw.forEach((t) => langVotes.token(t));
+    curSrc = langVotes.pick(curSrc);
+  };
+
   // 현재 누적분을 한 문장으로 확정 (GPT 호출 없음)
   const commit = () => {
     const id = curId, txt = stripFillers(finalText.trim()), src = curSrc, spk = curSpeaker;
@@ -217,6 +255,7 @@ export function runSoniox(h) {
     const tail = ttsPending;            // 종결부호 없이 남은 마지막 조각
     const hadFinal = !!finalTrans.trim(); // 발화 중 확정 번역이 흘러갔는지
     curId = null; finalText = ''; finalTrans = ''; lastTrans = ''; curSrc = ''; curSpeaker = ''; ttsPending = ''; langVotes.reset(); srcToks = [];
+    flipStarted = false; stopCarry();
     pending = []; // 리플레이 버퍼: 확정된 발화의 오디오는 재전송 대상에서 제외(발화 경계에서 비움)
     // 화자 구분 켰는데 엔진이 화자 정보를 한 번도 안 줬으면 1회 안내(진단)
     if (diar && !sawSpeaker && !noSpkWarned) { noSpkWarned = true; toHost({ type: 'status', message: '화자 구분: 엔진이 화자 정보를 반환하지 않음(번역/엔드포인트와 동시 사용 시 발생 가능)' }); }
@@ -236,7 +275,7 @@ export function runSoniox(h) {
     lastCommitAt = Date.now();
     const target = targetKeyFor(src);
     upsertItem(id, { [target]: out }, txt, spkLabel(spk), src || null, undefined, toks, tm); // lang=발화 언어 — 뷰어가 내 말/상대 말 정렬
-    lastCommitted = { id, key: target, out, at: Date.now() }; // 커밋 직후 늦게 도착하는 번역 꼬리 귀속용
+    lastCommitted = { id, key: target, out, at: Date.now(), src }; // 커밋 직후 늦게 도착하는 번역 꼬리 귀속용
     lockDetected(src); // 자동 감지: 첫 확정 발화의 언어로 힌트·용어집을 좁혀 1회 재연결
     if (tgt) polishCommit(id, target, txt, tgt); // 번역 다듬기(nano) — 직역투 후교정(비동기 카드 교체)
     if (confFix) maybeConfFix(id, toks, txt, src, target); // 저신뢰 자동 교정(고급옵션)
@@ -267,7 +306,7 @@ export function runSoniox(h) {
     // 리플레이: '마지막 확정 이후' 프레임(최근 ~2초)을 새 소켓에 재전송 — 연결 대기 중 큐잉뿐
     // 아니라, 죽은 구 소켓으로 이미 나갔던(=Soniox 가 못 들은) 진행 중 발화의 앞부분도 복구한다.
     for (const f of pending) { try { cur.send(f); } catch {} }
-    toHost({ type: 'status', message: `엔진 연결됨 (Soniox stt-rt-v5 · ${sxMode === 'two' ? `양방향 ${sxA}↔${sxB}` : `단방향→${sxTarget}`}${ttsOn ? ' · TTS on' : ''}, sens=${config.endpoint_sensitivity}, maxDelay=${config.max_endpoint_delay_ms}ms, lat=${config.endpoint_latency_adjustment_level})` });
+    toHost({ type: 'status', message: `엔진 연결됨 (Soniox ${SONIOX_MODEL} · ${sxMode === 'two' ? `양방향 ${sxA}↔${sxB}` : `단방향→${sxTarget}`}${ttsOn ? ' · TTS on' : ''}, sens=${config.endpoint_sensitivity}, maxDelay=${config.max_endpoint_delay_ms}ms, lat=${config.endpoint_latency_adjustment_level})` });
     // TTS 연결 워밍업 + 키/보이스 검증(첫 음성 지연 단축)
     if (ttsOn) {
       const wLang = sxMode === 'two' ? 'ko' : sxTarget;
@@ -287,6 +326,9 @@ export function runSoniox(h) {
     let endHit = false;
     let nonFinal = '';      // 비확정 전사(원문) — 매 응답마다 새로 구성
     let nonFinalTrans = ''; // 비확정 번역(타깃)
+    let otherSrc = '', otherTrans = '', otherLang = ''; // 비확정인 다음 사람의 말(앞 카드에 섞지 않고 새 카드로 표시)
+    let sawFinalTrans = false; // 이 응답에 확정 번역이 있었는지
+    if (carryTimer) { clearTimeout(carryTimer); carryTimer = null; } // 말이 이어짐 — 첫마디를 확정하지 않고 기다린다
     langVotes.begin();
     for (const t of toks) {
       if (t.text === '<end>') { endHit = true; continue; }
@@ -297,19 +339,40 @@ export function runSoniox(h) {
       }
       if (t.translation_status === 'translation') {
         if (t.is_final) {
-          // 화자 변경 커밋 직후: 새 원문 토큰이 오기 전에 도착한 번역 꼬리는 직전(방금 확정된) 발화의
-          // 번역이다 — 새(빈) 발화에 붙이면 남의 번역으로 시작하므로 직전 카드에 이어붙인다.
-          if (!curId && !finalText && lastCommitted && Date.now() - lastCommitted.at < 4000) {
+          if (hold.takeTrans(t)) continue; // 잡아 둔 말의 번역
+          // 커밋 직후: 새 원문 토큰이 오기 전에 도착한 번역 꼬리는 직전(방금 확정된) 발화의 번역이다 —
+          // 새(빈) 발화에 붙이면 남의 번역으로 시작하므로 직전 카드에 이어붙인다.
+          // 양방향은 번역의 원문 언어로 구분되므로, 새 카드가 시작된 뒤에 와도 직전 카드로 보낸다.
+          const srcLang = t.source_language ? String(t.source_language).split('-')[0].toLowerCase() : '';
+          const tailOfLast = lastCommitted && Date.now() - lastCommitted.at < 4000 && ((!curId && !finalText)
+            || (sxMode === 'two' && srcLang && srcLang === lastCommitted.src && srcLang !== curSrc));
+          if (tailOfLast) {
             lastCommitted.out += t.text;
             upsertItem(lastCommitted.id, { [lastCommitted.key]: lastCommitted.out });
             continue;
           }
+          sawFinalTrans = true;
           langVotes.token(t); curSrc = langVotes.pick(curSrc); // 엔진이 번역한 방향이 가장 확실
           finalTrans += t.text;
           ttsLang = targetKeyFor(curSrc); // 현재 타깃 언어로 합성
           ttsPending += t.text;           // 문장 단위 실시간 TTS 큐
-        } else nonFinalTrans += t.text;
+        } else if (hold.other(t, curSrc, finalText)) otherTrans += t.text;
+        else nonFinalTrans += t.text;
       } else {
+        // <end> 에 끊긴 짧은 첫마디 뒤에 말이 왔다: 같은 언어면 이어 붙이고(끊겨서 생긴 마침표는 뺀다), 상대 언어면 먼저 확정
+        if (carrying) {
+          const l = t.language ? String(t.language).split('-')[0].toLowerCase() : '';
+          if (l && l !== curSrc) commit();
+          else { carrying = false; finalText = stripSentenceEnd(finalText); finalTrans = stripSentenceEnd(finalTrans); ttsPending = stripSentenceEnd(ttsPending); }
+        }
+        if (t.is_final) {
+          if (hold.takeSource(t, curSrc, finalText)) continue; // 다음 사람의 말일 수 있어 앞 카드에 넣지 않음
+          if (hold.active()) returnHeld(); // 카드 언어로 돌아옴 — 문장 속 외국어였다
+        } else if (hold.active() || hold.other(t, curSrc, finalText)) {
+          otherSrc += t.text;
+          otherLang = otherLang || (t.language ? String(t.language).split('-')[0].toLowerCase() : '');
+          continue;
+        }
         // 전사(원문) 토큰 (translation_status: none | original | undefined)
         // 입력 언어는 첫 토큰이 아니라 '다수결'로 — 한국어 발화의 첫 단어가 영어로 오인돼도 뒤 토큰들이 교정
         langVotes.token(t); curSrc = langVotes.pick(curSrc); // 동률에선 유지(방향 플립 방지)
@@ -323,6 +386,8 @@ export function runSoniox(h) {
         } else nonFinal += t.text;
       }
     }
+    // 다음 사람의 말이 확실해졌다 → 앞 카드를 확정하고 잡아 둔 말로 새 카드를 시작
+    if (hold.active() && (endHit || hold.ready())) { commit(); startHeldCard(); }
     flushTtsSentences(); // 완성된 문장은 즉시 합성(발화 종료 기다리지 않음)
     const shownSrc = (finalText + nonFinal).trim();
     const shownTgt = (finalTrans + nonFinalTrans).trim();
@@ -336,8 +401,25 @@ export function runSoniox(h) {
       if (dropLang && curSrc === dropLang) liveSend(curId, {}, null, null); // 샌 소리로 보이는 동안은 감춤(언어 판정이 바뀌면 다시 뜸)
       else liveSend(curId, { [targetKeyFor(curSrc)]: sameLang ? shownSrc : shownTgt }, shownSrc || null, spkLabel(curSpeaker), curSrc || undefined);
     }
-    // 발화 종료(<end>) 또는 과도하게 길면 확정
-    if (endHit) { if (utterTm && utterTm.e == null) utterTm.e = Date.now(); commit(); }
+    // 진행 중인 다음 사람의 말 — 앞 카드와 따로 보여 준다(문장 속 외국어로 밝혀지면 지운다)
+    const heldSrc = (hold.text() + otherSrc).trim();
+    if (heldSrc) {
+      const heldLang = hold.lang() || otherLang;
+      if (!heldId) heldId = newId();
+      liveSend(heldId, { [targetKeyFor(heldLang)]: (hold.trans() + otherTrans).trim() }, heldSrc, spkLabel(curSpeaker), heldLang);
+    } else if (heldId) { liveSend(heldId, {}, null, null); heldId = null; }
+    if (endHit) {
+      if (utterTm && utterTm.e == null) utterTm.e = Date.now();
+      // 다음 사람의 짧은 첫마디가 <end> 에 끊겼다 — 말이 이어지면 합치고, 없으면 잠시 뒤 그대로 확정
+      if (flipStarted && speechWeight(finalText) < CARRY_MAX) {
+        carrying = true;
+        carryTimer = setTimeout(() => { carryTimer = null; if (curId && finalText.trim()) commit(); }, CARRY_MS);
+      } else commit();
+    } else if (sawFinalTrans && (sxMode === 'two' || inLang || lockedIn) && speechWeight(finalText) >= LONG_CARD && endsSentence(finalText) && endsSentence(finalTrans)) {
+      // 쉬지 않고 이어 말하면 <end> 가 오지 않아 카드가 한없이 길어진다(v6 발표 테스트 최대 760자) — 문장이 끝나고 번역이 따라온 곳에서 나눈다.
+      // 자동 감지 세션은 언어가 잠긴 뒤에만: 첫 확정에서 재연결하므로 말하는 도중 끊으면 그 사이 음성을 잃는다.
+      commit();
+    }
   });
   cur.on('error', (e) => { if (sx === cur) toHost({ type: 'status', message: 'Soniox 오류: ' + (e && e.message || e) }); });
   cur.on('close', () => {
@@ -405,7 +487,11 @@ export function runSoniox(h) {
     if (!cur) return;
     try { cur.send(''); } catch {}
     setTimeout(() => {
-      try { if (curId && finalText.trim()) commit(); } catch {}
+      try {
+        if (hold.active()) { commit(); startHeldCard(); }
+        if (curId && finalText.trim()) commit();
+        if (heldId) { liveSend(heldId, {}, null, null); heldId = null; }
+      } catch {}
       try { cur.close(); } catch {}
     }, 1000);
   }

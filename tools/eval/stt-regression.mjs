@@ -82,7 +82,7 @@ function transcribe(pcmBuf, terms) {
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       const cfg = {
-        model: 'stt-rt-v5', audio_format: 'pcm_s16le', sample_rate: RATE, num_channels: 1,
+        model: 'stt-rt-v6', audio_format: 'pcm_s16le', sample_rate: RATE, num_channels: 1,
         enable_language_identification: true, enable_endpoint_detection: true, language_hints: ['ko'],
       };
       if (terms && terms.length) cfg.context = { terms };

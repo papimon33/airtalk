@@ -1,11 +1,11 @@
 /* 안내데스크 파이프라인 — 대기(엔진 없음) → 손님 언어 선택 시 soniox 통역, 2채널(여객 마이크)·누화 판정·응대 기록.
    handleHost(realtime/host.js)가 runDesk(h) 를 호출한다(h = 연결 컨텍스트). runDeskGuestFeed = PC 호스트의 여객 마이크 공급 연결. */
 import { WebSocket } from 'ws';
-import { SONIOX_API_KEY, SONIOX_LANGS, SX_MAX_FAILS, sxRetryDelay } from '../config.js';
+import { SONIOX_API_KEY, SONIOX_MODEL, SONIOX_LANGS, SX_MAX_FAILS, sxRetryDelay } from '../config.js';
 import { saveSessions } from '../store/index.js';
 import { newId, capDeskLog } from '../store/sessions.js';
 import { rooms, deskCtrl, getRoom, broadcast } from '../realtime/rooms.js';
-import { openSonioxWs, buildSonioxContext, langJudge } from '../vendors/soniox.js';
+import { openSonioxWs, buildSonioxContext, langJudge, flipHold, speechWeight, stripSentenceEnd } from '../vendors/soniox.js';
 import { echoNorm, echoMatch } from '../util/security_util.js';
 import { isAckOnly, stripFillers } from '../util/pipeline_util.js';
 
@@ -173,7 +173,7 @@ export function runDesk(h) {
   // langs = 이번 응대의 활성 언어(ko + 손님 언어) — 해당 언어의 용어 표기·번역쌍만 context 로 주입
   // target = 단방향 세션의 타깃 언어(주면 번역쌍을 X→타깃 방향만 생성 — context 한도 절약)
   const baseConfig = (langs, target) => ({
-    model: 'stt-rt-v5', audio_format: 'pcm_s16le', sample_rate: 24000, num_channels: 1,
+    model: SONIOX_MODEL, audio_format: 'pcm_s16le', sample_rate: 24000, num_channels: 1,
     client_reference_id: 'u:' + (ws._userId || 'anon') + '|p:desk', // 유저별+파이프라인(안내데스크) 사용량 집계
     enable_language_identification: true, enable_endpoint_detection: true,
     endpoint_sensitivity: Number.isFinite(sens) ? Math.min(1, Math.max(-1, sens)) : 0,
@@ -209,11 +209,38 @@ export function runDesk(h) {
   let lastCommitAt = 0; // 중복 판정은 5초 창 안에서만(의도적 반복 발화 허용)
   let autoDetect = false; // 'Other languages' 시작 — 첫 발화의 언어를 감지해 two_way 로 전환
   const langVotes = langJudge(); // 입력 언어 판정(첫 단어 오인식 교정)
+  // 단일 마이크(two_way)에서 다음 사람의 말이 앞 카드에 붙지 않게 잡아 둠 — 2채널은 채널이 화자라 필요 없다
+  const hold = flipHold(() => (lockedB && lockedB !== A && !guestMicOn ? [A, lockedB] : []));
+  let heldId = null;
+  let flipStarted = false; // 지금 카드가 잡아 둔 말에서 시작됐는지
+  let carrying = false, carryTimer = null; // <end> 에 끊긴 짧은 첫마디: 말이 이어지면 합치고, 없으면 잠시 뒤 확정
+  const stopCarry = () => { carrying = false; if (carryTimer) { clearTimeout(carryTimer); carryTimer = null; } };
   let srcToks = []; // 원문 확정 토큰 [[text, confidence], ...] — 저신뢰 하이라이트 + 추후 평가용
   let dropAcks = ws._dropAcks === '1'; // 고급옵션: 단독 응답어 기록 생략(라이브 토글 가능)
   let confFix = ws._confFix === '1'; // 고급옵션: 저신뢰 자동 교정(라이브 토글 가능)
   const targetKeyFor = (src) => (lockedB && lockedB !== A ? (src === A ? lockedB : A) : A);
-  const resetUtterance = () => { curId = null; finalText = ''; finalTrans = ''; lastTrans = ''; curSrc = ''; langVotes.reset(); srcToks = []; };
+  const resetUtterance = () => { curId = null; finalText = ''; finalTrans = ''; lastTrans = ''; curSrc = ''; langVotes.reset(); srcToks = []; flipStarted = false; stopCarry(); };
+  const startHeldCard = () => {
+    const h = hold.drain();
+    curId = heldId || newId();
+    heldId = null;
+    finalText = h.text.trimStart();
+    finalTrans = h.trans.trimStart();
+    lastTrans = finalTrans;
+    curSrc = h.lang;
+    srcToks = h.toks;
+    h.raw.forEach((t) => langVotes.token(t));
+    staffTm = { s: Date.now() };
+    flipStarted = true;
+  };
+  const returnHeld = () => {
+    const h = hold.drain();
+    finalText += h.text;
+    finalTrans += h.trans;
+    srcToks.push(...h.toks);
+    h.raw.forEach((t) => langVotes.token(t));
+    curSrc = langVotes.pick(curSrc);
+  };
 
   // 자동 감지 완료(Other languages): 첫 발화가 한국어가 아니면 그 언어로 잠그고 채널 재체결.
   // 데스크·여객 어느 채널이 먼저 확정하든 여기로 모인다 — 표시 여부(소유권·누화 드랍)와 무관하게 언어부터 잠근다.
@@ -259,6 +286,13 @@ export function runDesk(h) {
     upsertItem(id, { [targetKeyFor(src)]: out }, txt, null, src || null, undefined, toks, tm);
     if (tgt) polishCommit(id, targetKeyFor(src), txt, tgt); // 번역 다듬기(nano) — 직역투 후교정
     if (confFix) maybeConfFix(id, toks, txt, src, targetKeyFor(src)); // 저신뢰 자동 교정(고급옵션)
+  };
+
+  // 앞 카드와 잡아 둔 다음 사람의 말까지 모두 확정
+  const commitAll = () => {
+    if (hold.active()) { commit(); startHeldCard(); }
+    commit();
+    if (heldId) { liveSend(heldId, {}, null, null); heldId = null; }
   };
 
   // 무음 자동종료: 발화가 들릴 때마다 리셋 → deskIdleMs 동안 '아무 말도' 없으면 대화 종료 → 대기(idle)
@@ -308,7 +342,7 @@ export function runDesk(h) {
     if (phase === 'active' && convStartedAt) ws._deskActiveMs = (ws._deskActiveMs || 0) + (Date.now() - convStartedAt);
     ws._deskActiveStart = 0;
     guestCommit(); // 손님의 마지막 미확정 발화도 기록에 남김
-    commit();
+    commitAll();
     if (session) {
       if (Array.isArray(session.items) && session.items.length) {
         session.deskLog = session.deskLog || [];
@@ -413,14 +447,30 @@ export function runDesk(h) {
     if (!toks.length) return;
     sxFails = 0; // 실제 토큰 수신 = 정상 연결 — 실패 카운터 리셋
     if (phase === 'active') armForeignTimer(); // 어떤 발화든(안내원 한국어 포함) 들리면 무음 타이머 리셋
-    let endHit = false, nonFinal = '', nonFinalTrans = '';
+    let endHit = false, nonFinal = '', nonFinalTrans = '', otherSrc = '', otherTrans = '', otherLang = '';
+    if (carryTimer) { clearTimeout(carryTimer); carryTimer = null; } // 말이 이어짐 — 첫마디를 확정하지 않고 기다린다
     langVotes.begin();
     for (const t of toks) {
       if (t.text === '<end>') { endHit = true; continue; }
       if (t.translation_status === 'translation') {
+        if (t.is_final && hold.takeTrans(t)) continue;
+        if (!t.is_final && hold.other(t, curSrc, finalText)) { otherTrans += t.text; continue; }
         langVotes.token(t); curSrc = langVotes.pick(curSrc);
         if (t.is_final) finalTrans += t.text; else nonFinalTrans += t.text;
       } else {
+        if (carrying) { // 짧은 첫마디 뒤에 말이 왔다: 같은 언어면 이어 붙이고(끊겨서 생긴 마침표는 뺀다), 상대 언어면 먼저 확정
+          const l = t.language ? String(t.language).split('-')[0].toLowerCase() : '';
+          if (l && l !== curSrc) commit();
+          else { carrying = false; finalText = stripSentenceEnd(finalText); finalTrans = stripSentenceEnd(finalTrans); }
+        }
+        if (t.is_final) {
+          if (hold.takeSource(t, curSrc, finalText)) continue; // 다음 사람의 말일 수 있어 앞 카드에 넣지 않음
+          if (hold.active()) returnHeld(); // 카드 언어로 돌아옴 — 문장 속 외국어였다
+        } else if (hold.active() || hold.other(t, curSrc, finalText)) {
+          otherSrc += t.text;
+          otherLang = otherLang || (t.language ? String(t.language).split('-')[0].toLowerCase() : '');
+          continue;
+        }
         // 입력 언어는 확정 토큰 다수결 — 한국어 발화의 첫 단어가 영어로 오인돼도 뒤 토큰들이 교정
         langVotes.token(t); curSrc = langVotes.pick(curSrc); // 동률에선 유지(방향 플립 방지)
         if (t.is_final) {
@@ -429,6 +479,8 @@ export function runDesk(h) {
         } else nonFinal += t.text;
       }
     }
+    // 다음 사람의 말이 확실해졌다 → 앞 카드를 확정하고 잡아 둔 말로 새 카드를 시작
+    if (hold.active() && (endHit || hold.ready())) { commit(); startHeldCard(); }
     const shownSrc = (finalText + nonFinal).trim();
     const shownTgt = (finalTrans + nonFinalTrans).trim();
     if (shownTgt) lastTrans = shownTgt;
@@ -438,7 +490,19 @@ export function runDesk(h) {
       if (!staffOwns(curSrc)) liveSend(curId, {}, null, null);
       else liveSend(curId, { [targetKeyFor(curSrc)]: shownTgt }, shownSrc || null, null, curSrc || null);
     }
-    if (endHit) { if (staffTm && staffTm.e == null) staffTm.e = Date.now(); commit(); } // 길이 기반 강제 확정 제거
+    const heldSrc = (hold.text() + otherSrc).trim();
+    if (heldSrc) {
+      const heldLang = hold.lang() || otherLang;
+      if (!heldId) heldId = newId();
+      liveSend(heldId, { [targetKeyFor(heldLang)]: (hold.trans() + otherTrans).trim() }, heldSrc, null, heldLang);
+    } else if (heldId) { liveSend(heldId, {}, null, null); heldId = null; }
+    if (endHit) {
+      if (staffTm && staffTm.e == null) staffTm.e = Date.now();
+      if (flipStarted && speechWeight(finalText) < 8) { // 다음 사람의 짧은 첫마디가 <end> 에 끊겼다
+        carrying = true;
+        carryTimer = setTimeout(() => { carryTimer = null; if (curId && finalText.trim()) commit(); }, 1800);
+      } else commit();
+    } // 길이 기반 강제 확정 제거
   }
 
   /* ---- 여객 채널(2채널 프로토타입): 뷰어 태블릿 마이크 → 별도 soniox one_way(선택언어→ko) ----
@@ -577,7 +641,7 @@ export function runDesk(h) {
     if (guestMicOn && phase === 'active') connectGuest();
     if (!guestMicOn) closeGuest();
     // 채널별 언어 고정 전환: 2채널이 되면 호스트 채널을 one_way(ko→손님 언어)로, 해제되면 two_way 로 재체결
-    if (phase === 'active' && lockedB && lockedB !== A) { commit(); closeSx(); connectSx(); }
+    if (phase === 'active' && lockedB && lockedB !== A) { commitAll(); closeSx(); connectSx(); }
     pushMic2();
     toHost({
       type: 'status',

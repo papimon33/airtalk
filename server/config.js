@@ -10,6 +10,7 @@ export const ROOT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 
 
 // 엔진 접속 URL — 테스트에서 로컬 fake 엔진으로 오버라이드(실 엔진 호출은 항상 과금되므로)
 export const SONIOX_WS_URL = process.env.SONIOX_WS_URL || 'wss://stt-rt.soniox.com/transcribe-websocket';
+export const SONIOX_MODEL = 'stt-rt-v6'; // 실시간 번역·안내데스크·용어 실검증 공통 — stt-rt-v5 는 2026-12-15 제거
 export const CARTESIA_TTS_WS_BASE = process.env.CARTESIA_TTS_WS_URL || 'wss://api.cartesia.ai/tts/websocket';
 
 export const PORT = Number(process.env.PORT || 3000);
@@ -49,8 +50,8 @@ export const sxRetryDelay = (n) => Math.min(SX_RETRY_BASE_MS * 2 ** (n - 1), 150
 // 시범운영 기간의 응대 전문은 보고서의 원천 데이터라 유실되면 복구 수단이 없어 넉넉히 잡는다.
 // 응대 1건 ≈ 2~4KB(toks 제외 후)이므로 1,000건이라도 세션 문서는 수 MB 수준 — Mongo 16MB 한도 안.
 export const DESKLOG_CAP = 1000;
-export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || ''; // Soniox stt-rt-v5 테스트 모드(선택)
-// Soniox stt-rt-v5 지원 언어(60) — 번역은 지원 언어 임의 쌍. 선택 UI/검증에 사용.
+export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || ''; // Soniox 실시간 번역(선택)
+// Soniox stt-rt-v6 지원 언어(60) — 번역은 지원 언어 임의 쌍. 선택 UI/검증에 사용.
 export const SONIOX_LANGS = ['af','sq','ar','az','eu','be','bn','bs','bg','ca','zh','hr','cs','da','nl','en','et','fi','fr','gl','de','el','gu','he','hi','hu','id','it','ja','kn','kk','ko','lv','lt','mk','ms','ml','mr','no','fa','pl','pt','pa','ro','ru','sr','sk','sl','es','sw','sv','tl','ta','te','th','tr','uk','ur','vi','cy'];
 export const CARTESIA_API_KEY = process.env.CARTESIA_API_KEY || ''; // Cartesia Sonic 실시간 TTS(선택)
 export const CARTESIA_VERSION = '2025-04-16';

@@ -46,7 +46,7 @@ test('실시간 번역: Soniox 연결이 헤더 인증이고 config 에 키가 �
   const host = wsClient(`${wsBase}/ws/host?session=${sess.id}&src=mic&sxMode=one&sxTarget=ko&in=en`, { Cookie: cookie });
   await host.ready;
   const config = await assertHeaderAuth(await fake.nextConnection(), '실시간 번역');
-  assert.equal(config.model, 'stt-rt-v5', '나머지 config 는 그대로');
+  assert.equal(config.model, 'stt-rt-v6', '나머지 config 는 그대로');
   host.ws.close();
   await wait(100);
 });

@@ -3,10 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  kstDay, CONFFIX, confFixTrigger, confFixMark, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk,
+  kstDay, CONFFIX, confFixTrigger, confFixMark, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk,
 } from '../server/util/pipeline_util.js';
+import { langJudge } from '../server/vendors/soniox.js';
 
 /* ── confFix 트리거: 연속 2+ 저신뢰(<0.4) 또는 극단 단발(≤0.12), 실단어 ≥3, 저신뢰 비율 ≤70% ── */
+
 test('confFixTrigger: 실단어 3개 미만이면 발동하지 않는다(인사·응답어 가드)', () => {
   assert.equal(confFixTrigger([['안녕', 0.1], ['하세요', 0.1]]), false);
   assert.equal(confFixTrigger([]), false);
@@ -103,6 +105,29 @@ test('kstDay: UTC 자정 직전은 KST 로는 다음 날로 버킷된다', () =>
   // 2026-07-15T23:00:00Z = KST 2026-07-16 08:00
   assert.equal(kstDay(Date.parse('2026-07-15T23:00:00Z')), '2026-07-16');
   assert.equal(kstDay(Date.parse('2026-07-15T10:00:00Z')), '2026-07-15');
+});
+
+test('langJudge: 카드 끝에 붙은 다른 언어 단어 하나로 카드 언어가 뒤집히지 않는다', () => {
+  const j = langJudge();
+  const tr = (text, source_language) => ({ translation_status: 'translation', is_final: true, text, source_language });
+  j.begin();
+  j.token(tr('設計から運用まで約1年半かかりました。', 'ko'));
+  assert.equal(j.pick(''), 'ko');
+  j.token(tr('정말.', 'ja')); // 다음 사람의 첫 단어(大変)가 이 카드에 섞여 온 경우
+  assert.equal(j.pick('ko'), 'ko', '글자 수가 많은 쪽을 따른다');
+  j.reset();
+  j.token({ translation_status: 'original', is_final: true, text: 'BHS', language: 'en' });
+  assert.equal(j.pick(''), 'en');
+  j.token(tr('수하물 처리 시스템입니다.', 'ja'));
+  assert.equal(j.pick('en'), 'ja', '번역 방향은 원문 토큰보다 우선한다');
+});
+
+test('polishLengthOk: 긴 번역의 뒷부분이 사라진 다듬기는 거른다', () => {
+  const long = '가'.repeat(501);
+  assert.equal(polishLengthOk('가'.repeat(192), long), false, '501자 → 192자(실제 v6 발표 테스트에서 나온 유실)');
+  assert.equal(polishLengthOk('가'.repeat(450), long), true, '자연스럽게 조금 줄어든 것은 허용');
+  assert.equal(polishLengthOk('가'.repeat(18), '가'.repeat(31)), true, '짧은 문장은 많이 줄어도 허용');
+  assert.equal(polishLengthOk('가'.repeat(200), '가'.repeat(50)), false, '해설이 섞여 크게 늘어난 경우');
 });
 
 test('langScriptOk: 다듬기가 원문 언어(한국어)로 돌아가거나 중국어를 번체로 쓰면 거른다', () => {

@@ -1,7 +1,7 @@
 /* 발표·연설 음성 → 우리 서버(실제 Soniox 인식·번역 + 다듬기) 끝까지 번역 확인.
    스크립트(txt) → 문단별 Cartesia 음성(캐시) → 로컬 서버(격리 DATA_DIR, 운영 DB 안 씀)에 앱과 같은 방식으로 실시간 속도로 흘려 넣기
    → 문단별 [스크립트 원문 / 인식 원문 / 번역] 보고서(md·json). 화면에 실제로 보이는 문장(다듬기·용어집 반영)을 그대로 모은다.
-   사용: node tools/eval/speech-e2e.mjs <script.txt> [--from ko] [--to zh] [--parts N] [--name 이름] [--dry(문단 나누기만 확인)]
+   사용: node tools/eval/speech-e2e.mjs <script.txt> [--from ko] [--to zh] [--parts N] [--name 이름] [--max-delay ms] [--dry(문단 나누기만 확인)]
      · 스크립트: 빈 줄 = 문단, '[1P] 제목' 줄 = 쪽 표시(읽지 않음), '====' 줄·이모지는 무시, '질문 N.'·'✅ 답변' 은 따로 읽는다.
      · --parts: 세션을 나눠 동시에 돌린다(기본: 한 묶음 9분 이하가 되게). 쪽 경계에서 나눈다.
    출력: tools/eval/out/<이름>.md·.json (git 무시). 음성 캐시: tools/eval/tts-audio/speech/
@@ -27,6 +27,7 @@ const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i
 const file = args.find((a) => !a.startsWith('--') && !args[args.indexOf(a) - 1]?.startsWith('--'));
 if (!file) { console.error('사용: node tools/eval/speech-e2e.mjs <script.txt> [--to zh]'); process.exit(1); }
 const FROM = opt('from', 'ko'), TO = opt('to', 'zh');
+const MAX_DELAY = Number(opt('max-delay', 2000));
 const NAME = opt('name', path.basename(file).replace(/\.[^.]+$/, '') + '-' + TO);
 
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split('\n')
@@ -78,7 +79,7 @@ async function tts(text) {
 async function runPart(base, cookie, part, k) {
   const sess = await fetch(base + '/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: JSON.stringify({ title: `${NAME} #${k + 1}`, pipeline: 'soniox', preset: 'oneway', src: 'mic', inLang: FROM }) }).then((r) => r.json());
-  const q = `session=${sess.id}&src=mic&out=${TO}&in=${FROM}&pipeline=soniox&audioOut=0&sxSens=0&sxMaxDelay=2000&sxLatency=0&sxMode=one&sxTarget=${TO}`;
+  const q = `session=${sess.id}&src=mic&out=${TO}&in=${FROM}&pipeline=soniox&audioOut=0&sxSens=0&sxMaxDelay=${MAX_DELAY}&sxLatency=0&sxMode=one&sxTarget=${TO}`;
   const ws = new WebSocket(`${base.replace('http', 'ws')}/ws/host?${q}`, { headers: { Cookie: cookie } });
   const sent = new Map(); // id -> { id, firstAt, source, texts, final }
   const statuses = [];

@@ -1,7 +1,7 @@
 /* OpenAI(chat completions) — 저신뢰 자동 교정(confFix) 판정·번역 다듬기(polish)·번역·띄어쓰기 교정 */
 import { OPENAI_API_KEY, REFINE_MODEL, LANG_NAMES } from '../config.js';
 import { termsConfig } from '../store/index.js';
-import { isAckOnly, sanitizeTranslation, langScriptOk } from '../util/pipeline_util.js';
+import { isAckOnly, sanitizeTranslation, langScriptOk, polishLengthOk } from '../util/pipeline_util.js';
 
 /* ------------------------------------------------------------------ */
 /*  번역 출력 정화: 소형 모델이 끼워넣는 군더더기 제거                    */
@@ -107,10 +107,13 @@ export function reasoningEffort(model) {
    폴란드 시연 후속: "유럽 내 도입 사례에서요" → "유럽 쪽 구축 사례를 보면요" 류의 어색한 직역 교정.
    실패·무변경이면 null(원문 유지). TTS 는 이미 재생된 뒤라 자막/기록만 다듬어진다(의도).
    context(직전 대화)가 핵심 — "처음부터요" 같은 단답은 맥락 없이 자연화가 불가능하다. */
+const POLISH_MAX_CHARS = 1500;
 export async function polishText(src, tgt, tgtLang, context) {
   if (!OPENAI_API_KEY) return null;
   const t = String(tgt || '').trim();
   if (t.length < 4 || isAckOnly(t)) return null; // 단답·초단문은 다듬을 것이 없음(비용 절약)
+  // 너무 긴 카드는 다듬지 않는다 — 잘라서 보내면 결과가 카드 전체를 덮어써 뒷부분이 사라진다
+  if (t.length > POLISH_MAX_CHARS) return null;
   // 중국어는 간체로 못 박는다 — 지정하지 않으면 가끔 번체자로 고쳐 쓴다
   const langName = tgtLang === 'zh' ? '중국어 간체(简体中文)' : LANG_NAMES[tgtLang] || tgtLang;
   const sys =
@@ -129,10 +132,11 @@ export async function polishText(src, tgt, tgtLang, context) {
   try {
     const body = {
       model: REFINE_MODEL,
-      max_completion_tokens: 220,
+      // 번역 길이에 맞춘다(한중일은 글자당 1~2토큰). 고정값이면 긴 카드가 중간에 끊긴다
+      max_completion_tokens: Math.max(220, t.length * 3),
       messages: [
         { role: 'system', content: sys },
-        { role: 'user', content: `[직전 대화]\n${(context || '(없음)').slice(0, 600)}\n\n[원문] ${String(src || '').slice(0, 300)}\n[기계 번역] ${t.slice(0, 300)}` },
+        { role: 'user', content: `[직전 대화]\n${(context || '(없음)').slice(0, 600)}\n\n[원문] ${String(src || '').slice(0, POLISH_MAX_CHARS * 2)}\n[기계 번역] ${t}` },
       ],
     };
     const re = reasoningEffort(REFINE_MODEL);
@@ -144,8 +148,9 @@ export async function polishText(src, tgt, tgtLang, context) {
     });
     if (!r.ok) return null;
     const d = await r.json();
+    if (d?.choices?.[0]?.finish_reason === 'length') return null; // 토큰 한도로 끊긴 결과 — 쓰면 뒷부분을 잃는다
     const out = sanitizeTranslation((d?.choices?.[0]?.message?.content || '').trim());
-    if (!out || out === t || out.length > t.length * 3 + 20) return null; // 무변경·폭주(해설 섞임) 방어
+    if (!out || out === t || !polishLengthOk(out, t)) return null; // 무변경·폭주(해설 섞임)·내용 유실 방어
     if (!langScriptOk(out, t, tgtLang)) return null; // 원문 언어로 되돌아갔거나 번체자 — 기계 번역을 그대로 둔다
     return out;
   } catch { return null; }

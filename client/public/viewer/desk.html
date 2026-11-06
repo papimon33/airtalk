@@ -310,7 +310,7 @@ const cards = new Map();   // id -> { el, bub, texts, source, lang }
 
 /* ---- 언어·문구 현지화(손님 언어 기준, en 폴백) ---- */
 const LANGNAME = { ko:'한국어', en:'English', ja:'日本語', zh:'中文', vi:'Tiếng Việt', th:'ไทย', id:'Bahasa Indonesia', ru:'Русский', tl:'Filipino', ms:'Bahasa Melayu', es:'Español', fr:'Français', pt:'Português', ar:'العربية', de:'Deutsch', it:'Italiano', hi:'हिन्दी', tr:'Türkçe', uk:'Українська', pl:'Polski', nl:'Nederlands', mn:'Монгол' };
-/* 손님이 고를 수 있는 언어(표시 순서). 전부 Soniox stt-rt-v5 지원 + LANGNAME 자국어 표기 보유.
+/* 손님이 고를 수 있는 언어(표시 순서). 전부 Soniox stt-rt-v6 지원 + LANGNAME 자국어 표기 보유.
    몽골어(mn)는 LANGNAME 에는 있으나 엔진이 지원하지 않아 넣지 않는다(자동감지로도 불가).
    상위 3개는 김포 국제선 실제 취항 기준 — 스크롤 없이 보이도록 리스트 최상단에 둔다. */
 const DESK_LANGS = ['en','ja','zh','vi','th','id','ru','tl','es','fr','de','ar'];
