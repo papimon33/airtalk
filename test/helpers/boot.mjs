@@ -2,16 +2,24 @@
    SONIOX_WS_URL 등 env 오버라이드는 extraEnv 로 주입(가짜 엔진 연결). */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+const freePort = () => new Promise((res, rej) => {
+  const srv = net.createServer();
+  srv.once('error', rej);
+  srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => res(port)); });
+});
+
 export async function bootServer(extraEnv = {}) {
   const dataDir = extraEnv.DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'airtalk-test-'));
-  // 파일별 병렬 실행(node --test) 시 포트 충돌을 피하기 위해 pid+난수 분산
-  const port = 4100 + (process.pid % 900) + Math.floor(Math.random() * 2000);
+  // 빈 포트를 운영체제에서 받는다. 예전엔 난수로 골라, 동시에 뜬 다른 테스트 서버와 겹치면
+  // 내 서버는 죽고 /health 는 남의 서버가 대답해 엉뚱한 서버와 통신했다(CI 간헐 실패·멈춤의 원인).
+  const port = await freePort();
   const child = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
     env: {
@@ -40,7 +48,7 @@ export async function bootServer(extraEnv = {}) {
     if (child.exitCode != null) break;
     try {
       const r = await fetch(base + '/health');
-      if (r.ok) {
+      if (r.ok && child.exitCode == null) {
         return {
           child, base, port, dataDir,
           log: () => out,
