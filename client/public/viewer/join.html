@@ -446,7 +446,7 @@ function applySxInfo(info){
   rerender();
 }
 async function loadSession(){
-  let title = 'AirTalk', sxInfo = null, ttsOk = true; // ttsOk: 세션 주인에게 TTS 권한이 있을 때만 듣기 버튼
+  let title = 'AirTalk', sxInfo = null; ttsOk = true; // ttsOk: 세션 주인에게 TTS 권한이 있고 진행자가 허용했을 때만 듣기 버튼
   // 접속 순간 일시 네트워크 오류로 세션 타입을 whisper 기본값으로 오판한 채 굳지 않도록 — 실패 시 5초 뒤 재시도
   try { const s = await fetch('/api/sessions/'+sessionId+tq1).then(r=>r.json()); if (s){ if(s.title) title = s.title; if(s.pipeline) sessionPipeline = s.pipeline; if(s.outLang) sessionOutLang = s.outLang; sxInfo = s.sxInfo || null; speakerNames = s.speakers || {}; ttsOk = s.tts !== false; } }
   catch { setTimeout(loadSession, 5000); }
@@ -643,6 +643,7 @@ function setPartial(text){ const s=atBottom(); partialEl.innerHTML = text ? ('<d
 
 /* ---- 번역 음성 재생 (translate, 24kHz PCM16) ---- */
 let audioOn = false;
+let ttsOk = true; // 듣기 버튼 허용(세션 정보·tts-avail)
 let actx = null;
 let outCursor = 0;
 let mgain = null; // 마스터 게인(TTS 재생 경로)
@@ -711,6 +712,11 @@ function connect(){
     else if(m.type==='sentence'){ setPartial(''); upsert(m); }
     else if(m.type==='audio'){ if(audioOn) playPcm24(m.b64); }
     else if(m.type==='meta'){ if(sessionPipeline==='soniox' || sessionPipeline==='desk') applySxInfo(m.sxInfo); }
+    else if(m.type==='tts-avail' && sessionPipeline==='soniox'){
+      // 진행자가 '뷰어에서 재생 지원'을 바꿈 — 끄면 듣기 버튼을 숨기고 듣던 음성도 멈춘다
+      ttsOk = !!m.on; $('audioBtn').style.display = ttsOk ? 'flex' : 'none';
+      if(!ttsOk && audioOn){ audioOn = false; $('audioBtn').classList.remove('on'); $('audioBtn').setAttribute('aria-pressed','false'); clearAudioQueue(); sendAudioSub(false); }
+    }
     else if(m.type==='desk-reset'){ clearAll(); }
     else if(m.type==='speakers'){ speakerNames = m.speakers || {}; rerenderSpk(); }
     else if(m.type==='host'){ setHostActive(m.active); }

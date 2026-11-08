@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
 import IconButton from '@mui/material/IconButton';
 import ButtonBase from '@mui/material/ButtonBase';
 import InputBase from '@mui/material/InputBase';
@@ -36,7 +35,7 @@ import { can } from '../shared/authState.js';
 import { useT } from '../shared/i18n.js';
 import { BRAND, BRAND_SOFT } from '../shared/brand.js';
 import { useSessionLangs, defaultName } from '../shared/newSession.js';
-import { PickSheet, FormSheet } from '../phone/common.jsx';
+import { PickSheet, FormSheet, langOptions } from '../phone/common.jsx';
 import { PlusIcon, ArrowRightIcon, SwapIcon, HeadsetIcon } from '../shared/icons.jsx';
 
 function rel(ts) {
@@ -77,10 +76,6 @@ export function IconMode3(props) {
   );
 }
 // 새 세션 모달 — 모드 2종(번역 방향) + 관리자에게만 안내데스크(별도 항목). 음성 입력(마이크/시스템)은 세션 안에서 고른다.
-export const SITUATIONS = [
-  { v: 'oneway', title: '실시간 번역', badge: '강의·영상·웨비나', example: '마이크나 시스템 소리를 원하는 언어로 번역합니다.', Icon: IconMode1 },
-  { v: 'twoway', title: '양방향 통역', badge: '대면 대화·온라인 회의', example: '서로의 언어를 실시간으로 번역합니다. 마이크 또는 시스템 소리와 마이크를 함께 씁니다.', Icon: IconMode3 },
-];
 // 세션 모드 표시명(라이브 헤더·목록 배지). 구 프리셋(live/online/mobile/field/meeting)은 서버가 부팅 시
 // 이 둘로 이전하지만, 이전 전 응답·캐시 대비로 같은 이름에 매핑해 둔다.
 export const TYPE_NAME = { oneway: '실시간 번역', twoway: '양방향 통역', live: '실시간 번역', online: '실시간 번역', mobile: '양방향 통역', field: '양방향 통역', meeting: '양방향 통역' };
@@ -160,8 +155,6 @@ export default function SessionList({ onOpen, createSignal }) {
   const [selMode, setSelMode] = useState(false); // 일괄 선택 모드
   const [selIds, setSelIds] = useState(() => new Set());
   const [confirmReq, setConfirmReq] = useState(null); // 공용 확인 다이얼로그(브라우저 confirm 대체)
-  const [showOnboard, setShowOnboard] = useState(() => localStorage.getItem('kac-onboard-v1') !== '1'); // 첫 사용 안내
-  const dismissOnboard = () => { setShowOnboard(false); localStorage.setItem('kac-onboard-v1', '1'); };
 
   const reload = () => api.list(q.trim()).then(setList).catch(() => {});
   // 안내데스크 현황: 목록에 안내데스크 세션이 있으면 상태(호스트 연결·응대 중·뷰어 수)를 10초 주기로
@@ -305,28 +298,13 @@ export default function SessionList({ onOpen, createSignal }) {
             {!selMode && shown.length > 0 && (
               <Button size="small" onClick={() => setSelMode(true)} sx={{ color: 'text.secondary', flex: 'none' }}>선택</Button>
             )}
+            {!selMode && (
+              <Button variant="contained" onClick={openDlg} startIcon={<PlusIcon strokeWidth={2.4} sx={{ fontSize: '18px !important' }} />}
+                sx={{ flex: 'none', height: 40, px: 2, fontWeight: 700, bgcolor: BRAND, '&:hover': { bgcolor: '#4A3FD4' } }}>
+                {t('newSession')}
+              </Button>
+            )}
           </Box>
-
-          {/* 첫 사용 온보딩: 모드 3종 안내(1회 표시) */}
-          {showOnboard && (
-            <Card sx={{ p: 2.5, mb: 2.5, border: 1, borderColor: 'divider' }}>
-              <Typography sx={{ fontWeight: 800, fontSize: 15, mb: 1 }}>처음이신가요? 상황에 맞는 모드를 고르세요</Typography>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 1.5 }}>
-                {SITUATIONS.map((p) => (
-                  <Typography key={p.v} sx={{ fontSize: 13.5, color: 'text.secondary' }}>
-                    <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>{p.title}</Box>: {p.example}
-                  </Typography>
-                ))}
-              </Box>
-              <Typography sx={{ fontSize: 12.5, color: 'text.disabled', mb: 1.5 }}>
-                모드는 세션을 만든 뒤에도 번역을 시작하기 전이라면 세션 안에서 바꿀 수 있습니다.
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button size="small" variant="contained" onClick={() => { dismissOnboard(); openDlg(); }}>첫 세션 만들기</Button>
-                <Button size="small" onClick={dismissOnboard} sx={{ color: 'text.secondary' }}>닫기</Button>
-              </Box>
-            </Card>
-          )}
 
           {empty && q.trim() && (
             <Box sx={{ textAlign: 'center', mt: 8, color: 'text.secondary' }}>
@@ -455,12 +433,6 @@ export default function SessionList({ onOpen, createSignal }) {
         </Box>
       </Box>
 
-      {/* 새 세션 + 버튼(폰과 같은 모양·자리) */}
-      <ButtonBase onClick={openDlg} aria-label={t('newSession')}
-        sx={{ position: 'fixed', right: 24, bottom: 'calc(28px + env(safe-area-inset-bottom))', width: 60, height: 60, borderRadius: '18px', bgcolor: BRAND, color: '#fff', boxShadow: '0 6px 18px rgba(91,79,232,0.35)', zIndex: 1200 }}>
-        <PlusIcon strokeWidth={2.4} sx={{ fontSize: 28 }} />
-      </ButtonBase>
-
       <Menu anchorEl={menu?.anchor} open={!!menu} onClose={() => setMenu(null)}
         slotProps={{ paper: { sx: { '& .MuiMenuItem-root': { fontSize: 13 } } } }}>
         {menu && (
@@ -522,7 +494,7 @@ export default function SessionList({ onOpen, createSignal }) {
         </Box>
       </Dialog>
       <PickSheet open={!!langPick} onClose={() => setLangPick(null)} title={langPick?.caption} value={langPick?.value}
-        options={(langPick?.codes || []).map((c) => ({ code: c, label: c === 'auto' ? t('autoDetect') : t.lang(c) }))}
+        options={langOptions(langPick?.codes || [], t)}
         onPick={(v) => langs.pickLang(langPick.k, v)} />
 
       {/* 이름 변경 */}

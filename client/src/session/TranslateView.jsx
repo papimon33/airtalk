@@ -55,7 +55,7 @@ import DeleteSweepOutlinedIcon from '@mui/icons-material/DeleteSweepOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import ConfirmDialog from '../shared/ConfirmDialog.jsx';
 import MobileLive from '../phone/MobileLive.jsx';
-import { setPref } from '../shared/prefs.js';
+import { setPref, usePrefs } from '../shared/prefs.js';
 import { can, setRecordingFlag } from '../shared/authState.js';
 import { api } from '../shared/api.js';
 
@@ -183,31 +183,8 @@ function LockedValue({ label }) {
   );
 }
 // 토글 + (i) 설명 툴팁 (+ 선택적 note: 스위치 옆 작은 안내)
-function InfoToggle({ label, hint, checked, disabled, onChange, note }) {
-  return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.4 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4 }}>
-        <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'text.secondary', letterSpacing: '0.02em' }}>{label}</Typography>
-        <Tooltip title={hint} arrow>
-          <InfoOutlinedIcon sx={{ fontSize: 13, color: 'text.disabled', cursor: 'help' }} />
-        </Tooltip>
-      </Box>
-      <Box sx={{ height: 37, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Switch checked={checked} disabled={disabled} onChange={onChange} />
-        {note && <Typography sx={{ fontSize: 10.5, color: 'text.disabled', whiteSpace: 'nowrap' }}>{note}</Typography>}
-      </Box>
-    </Box>
-  );
-}
 
 // 고급 설정 섹션 캡션 — 항목이 많아져 기본/실험을 눈으로 구분(기능 변화 없음)
-function SettingsCap({ children, first }) {
-  return (
-    <Typography sx={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.04em', color: 'text.disabled', mt: first ? 0 : 2.5, mb: 1.25, pb: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-      {children}
-    </Typography>
-  );
-}
 
 function SxSlider({ label, hint, value, min, max, step, disabled, fmt, onChange }) {
   return (
@@ -248,18 +225,6 @@ export default function TranslateView({ session: initial, onBack, mobile = false
     const v = s == null ? NaN : Number(s);
     return Number.isFinite(v) && v >= 0 && v <= 1.5 ? v : 1;
   });
-  const [sxSens, setSxSens] = useState(() => {
-    const v = Number(localStorage.getItem('kac-sx-sens'));
-    return Number.isFinite(v) ? v : 0;
-  });
-  const [sxMaxDelay, setSxMaxDelay] = useState(() => {
-    const v = Number(localStorage.getItem('kac-sx-maxdelay'));
-    return Number.isFinite(v) && v > 0 ? v : 2000;
-  });
-  const [sxLatency, setSxLatency] = useState(() => {
-    const v = Number(localStorage.getItem('kac-sx-latency'));
-    return Number.isFinite(v) ? v : 0;
-  });
   const [deskIdle, setDeskIdle] = useState(() => {
     const v = Number(localStorage.getItem('kac-desk-idle'));
     return Number.isFinite(v) && v >= 10 ? v : 30; // 초 (기본 30)
@@ -280,7 +245,6 @@ export default function TranslateView({ session: initial, onBack, mobile = false
     return Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
   });
   // 자동 감도(폰 설정): 켜면 민감도 슬라이더 대신 주변 소음 기준으로 판정(audio.js AUTO_GATE_RATIO)
-  const [micAuto, setMicAuto] = useState(() => localStorage.getItem('kac-mic-auto') === '1');
   const [guestSens, setGuestSens] = useState(() => {
     const s = localStorage.getItem('kac-desk-guest-sens');
     const v = s == null ? NaN : Number(s);
@@ -300,8 +264,6 @@ export default function TranslateView({ session: initial, onBack, mobile = false
   const [sxB, setSxB] = useState(() => savedPair[1] || localStorage.getItem('kac-sx-b') || 'en');
   const savePair = (a, b) => { try { localStorage.setItem('kac-sx-a', a); localStorage.setItem('kac-sx-b', b); localStorage.setItem('kac-sx-pair:' + initial.id, `${a}|${b}`); } catch {} };
   // 다국어 회의: 동시 번역 언어 집합(2~4개). 기기 저장.
-  // 고급옵션: 단독 응답어(네/Yes/Okay 단독 발화) 기록 생략 — 기본 꺼짐(보존)
-  const [dropAcks, setDropAcks] = useState(() => localStorage.getItem('kac-drop-acks') === '1');
   const [ttsOn, setTtsOn] = useState(() => { const s = localStorage.getItem('kac-sx-tts'); return s === '1' ? true : s === '0' ? false : !onewayPreset; }); // 음성재생(TTS): 오프라인(대화) 기본 ON, 온라인 OFF
   // TTS 는 TTS 권한이 있고 PC 소리를 캡처하지 않을 때만 — 캡처 중이면 TTS 음성이 PC 소리 채널로 되들어가 다시 번역된다.
   // (켜 둔 저장값이 있어도 이 조건에서는 합성·재생하지 않는다)
@@ -331,16 +293,14 @@ export default function TranslateView({ session: initial, onBack, mobile = false
   // 번역 중에는 다른 기기 로그인으로 로그아웃돼도 끊지 않는다(중지한 뒤 로그인 화면으로) — authState 참고
   useEffect(() => { setRecordingFlag(recording); return () => setRecordingFlag(false); }, [recording]);
   const [recStartAt, setRecStartAt] = useState(null); // 녹음 시작 시각 — 폰 화면 경과 시간 표시
+  const [viewerTts, setViewerTts] = useState(initial.viewerTts !== false); // 뷰어(QR) 음성 듣기 허용 — 세션에 저장
   const [micMuted, setMicMuted] = useState(false); // 발화 일시정지(세션 유지, 마이크만 off)
   const [viewerActive, setViewerActive] = useState(false); // 데스크: 통역(응대) 진행 중인지
   const [deskGuestLang, setDeskGuestLang] = useState(null); // 데스크: 현재 응대 중인 손님 언어
   const [deskGuestMic, setDeskGuestMic] = useState(false); // 데스크: 여객 태블릿 마이크(2채널) 연결 여부
   const [hostLang, setHostLang] = useState('en'); // 데스크: 호스트 수동 시작용 손님 언어
   const deskAutoRef = useRef(false); // 데스크 자동 캡처 시작 1회 가드
-  const [fontScale, setFontScale] = useState(() => { // 번역 텍스트 크기(고급설정, 기기 저장)
-    const v = Number(localStorage.getItem('kac-font-scale'));
-    return Number.isFinite(v) && v >= 0.8 && v <= 1.6 ? v : 1;
-  });
+  const fontScale = usePrefs().fontScale; // 번역 텍스트 크기 — 설정(화면)과 같은 값
   const [level, setLevel] = useState(0);
   const [level2, setLevel2] = useState(0); // 스테레오 2채널: 상대(오른쪽) 채널 입력 크기
   // 스테레오 2채널(양방향 통역 + 마이크): 수신기가 송신기 2개를 좌우로 나눠 보내면 자동으로 채널 분리.
@@ -354,10 +314,6 @@ export default function TranslateView({ session: initial, onBack, mobile = false
   const [micStaffId, setMicStaffId] = useState(() => localStorage.getItem('kac-desk-mic-staff') || '');
   const [micGuestId, setMicGuestId] = useState(() => localStorage.getItem('kac-desk-mic-guest') || '');
   const [micDevs, setMicDevs] = useState([]); // 사용 가능한 입력 장치 목록(연결 확인)
-  // RNNoise(신경망 잡음 억제, β): 켜면 브라우저 기본 NS 대신 사용 — 지향성 마이크 없는 데스크 보조용
-  const [rnnoise, setRnnoiseOpt] = useState(() => localStorage.getItem('kac-rnnoise') === '1');
-  // 저신뢰 자동 교정(β): 연속 저신뢰 발화만 GPT 가 맥락 보고 원문 교정→재번역해 카드 덮어쓰기
-  const [confFix, setConfFix] = useState(() => localStorage.getItem('kac-conf-fix') === '1');
   // 실시간 번역(soniox): 사용할 마이크 장치 선택(기본 = 시스템 기본 마이크)
   const [micId, setMicId] = useState(() => localStorage.getItem('kac-mic-device') || '');
   const [qr, setQr] = useState(null);
@@ -432,6 +388,7 @@ export default function TranslateView({ session: initial, onBack, mobile = false
         }))
       );
       setSpeakers(s.speakers || {});
+      setViewerTts(s.viewerTts !== false);
       setCfg({
         pipeline: s.pipeline || 'soniox',
         inLang: s.inLang || 'auto',
@@ -672,21 +629,14 @@ export default function TranslateView({ session: initial, onBack, mobile = false
         gender,
         volume,
         micSens, // 마이크 음성인식 민감도(0~100): 일정 볼륨 이상만 전송하는 클라이언트 볼륨 게이트
-        micAuto: mobile ? micAuto : false, // 자동 감도(폰 화면에만 설정 있음)
         micSens2: micSens2 == null ? micSens : micSens2, // 송신기 2(오른쪽) 감도(스테레오일 때만)
         deskGuestSens: cfg.pipeline === 'desk' ? guestSens : undefined, // 여객 태블릿 마이크 민감도(서버 경유 뷰어 근접 게이트)
-        sxSens: mobile ? 0 : sxSens, // 폰 화면엔 고급 설정이 없다 — 발화 끊김·실험 기능은 기본값 고정
-        sxMaxDelay: mobile ? 2000 : sxMaxDelay,
-        sxLatency: mobile ? 0 : sxLatency,
         sxMode,
         sxTarget,
         sxA,
         sxB,
-        dropAcks: mobile ? false : dropAcks, // 고급옵션: 단독 응답어(네/Yes) 기록 생략
-        confFix: mobile ? false : confFix, // 고급옵션: 저신뢰 자동 교정(GPT) — 연속 저신뢰 발화만 맥락 교정
         // 데스크 마이크 2대(PC): 여객 장치가 지정된 경우에만 — 여객 오디오는 src=guestmic 별도 연결로 공급
         mic2: cfg.pipeline === 'desk' && mic2On && micGuestId && !window.AndroidAudio ? { staff: micStaffId || null, guest: micGuestId } : undefined,
-        rnnoise: mobile ? false : rnnoise, // 잡음 제거 강화(β): 브라우저 NS 대신 RNNoise(신경망) — 마이크 캡처에만 적용
         micId: cfg.pipeline === 'soniox' && micId ? micId : undefined, // 실시간 번역: 마이크 장치 선택
         // 스테레오 2채널 자동 판별(양방향 통역 + 마이크) — 모노 기기·단방향은 기존 1채널 그대로
         stereo: cfg.pipeline === 'soniox' && sxMode === 'two' && sourceMode === 'mic',
@@ -737,7 +687,7 @@ export default function TranslateView({ session: initial, onBack, mobile = false
   // 캡처 설정 변경 후 재시작(데스크 상시 캡처용) — recorder 의 stop 만 직접 호출
   // (컴포넌트 stop() 은 stopReq 를 세워 재시작을 막으므로 사용하지 않음).
   // ⚠ start 는 반드시 startRef(최신 렌더의 함수)로 불러야 한다 — setTimeout 클로저가 옛 start 를 잡으면
-  //   그 안의 stale recording=true 가드에 걸려 재시작이 조용히 무시된다(RNNoise 토글 시 캡처가
+  //   그 안의 stale recording=true 가드에 걸려 재시작이 조용히 무시된다(설정 변경으로 재시작할 때 캡처가
   //   멈춘 채 복구되지 않던 버그의 원인).
   const restartTimerRef = useRef(null); // 재캡처 600ms 타이머 — stop()/언마운트에서 반드시 취소
   const restartCapture = () => {
@@ -753,12 +703,7 @@ export default function TranslateView({ session: initial, onBack, mobile = false
       try { startRef.current && startRef.current(); } catch {}
     }, 600); // 리렌더 후 최신 구성으로 재캡처
   };
-  // 발화 끊김(soniox 엔드포인트) 설정은 연결 시 고정 — 데스크에서 슬라이더로 바꾸면 짧게 모아 재캡처
   const restartDebRef = useRef(null);
-  const scheduleRestart = () => {
-    clearTimeout(restartDebRef.current);
-    restartDebRef.current = setTimeout(() => restartCapture(), 900);
-  };
   // 데스크 마이크 2대: 설정 변경(토글·장치 교체)을 저장하고, 캡처 중이면 새 구성으로 재시작.
   const applyMic2 = (p) => {
     if ('on' in p) { setMic2On(p.on); localStorage.setItem('kac-desk-mic2', p.on ? '1' : '0'); }
@@ -842,133 +787,27 @@ export default function TranslateView({ session: initial, onBack, mobile = false
   // 대화상자·메뉴·알림 — 데스크톱/폰 화면이 공유한다
   const overlays = (
     <>
-      <Dialog open={sxSettingsOpen} onClose={() => setSxSettingsOpen(false)} PaperProps={{ sx: { width: 400, maxWidth: 400 } }}>
-        <DialogTitle sx={{ fontWeight: 800 }}>고급 설정</DialogTitle>
+      {/* 실시간 번역·양방향: 텍스트 크기만(마이크는 아래 바 ⌄ 에서). 안내데스크: 마이크 2대 민감도도 여기서(아래 바가 없다).
+          끊김(민감도 0·최대 지연 2000ms·지연 레벨 0)·잡음 억제(브라우저 기본)·응답어 보존은 고정값 — 2026-11 실측 최적값 */}
+      <Dialog open={sxSettingsOpen} onClose={() => setSxSettingsOpen(false)} PaperProps={{ sx: { width: 400, maxWidth: 'calc(100vw - 32px)' } }}>
+        <DialogTitle sx={{ fontWeight: 800, fontSize: 17 }}>{cfg.pipeline === 'desk' ? '화면·마이크' : '텍스트 크기'}</DialogTitle>
         <DialogContent>
-          <Typography sx={{ fontSize: 12, color: 'text.secondary', mb: 2.5 }}>이 설정은 이 기기에 저장됩니다.</Typography>
-          <SxSlider label="텍스트 크기" hint="번역 텍스트 표시 크기 (80~160%)" value={fontScale} min={0.8} max={1.6} step={0.1} disabled={false}
+          <SxSlider label="텍스트 크기" value={fontScale} min={0.8} max={1.6} step={0.1} disabled={false}
             fmt={(v) => Math.round(v * 100) + '%'}
-            onChange={(v) => { setFontScale(v); localStorage.setItem('kac-font-scale', String(v)); }} />
-          <SettingsCap first>마이크</SettingsCap>
-          {/* 녹음(캡처) 중에도 실시간 조절 — 데스크는 상시 캡처라 비활성화하면 아예 바꿀 수 없었음 */}
-          <SxSlider label={cfg.pipeline === 'desk' ? '호스트 마이크 민감도' : '마이크 음성인식 민감도'} hint="100=모든 소리(기본), 낮출수록 조용한 소리 무시(주변소음·속삭임 차단). 주변 잡담이 자막에 섞이면 낮추세요 — 너무 낮으면 말하는 중간이 끊깁니다. 번역 중에도 바로 적용됩니다." value={micSens} min={0} max={100} step={1} disabled={false}
-            fmt={(v) => String(v)}
-            onChange={(v) => { setMicSens(v); localStorage.setItem('kac-mic-sens', String(v)); if (recRef.current && recRef.current.setMicSens) recRef.current.setMicSens(v); }} />
-          {/* 지금 입력 크기 + 인식 기준선 — 숫자만으로는 맞추기 어려워 눈으로 보며 조절(번역 중에만) */}
-          {recording && cfg.pipeline !== 'desk' && (() => {
-            // 앱·스테레오 원음 캡처(에코 제거 꺼짐)는 앱 곡선으로 게이트한다 — 기준선도 같은 곡선으로
-            const abs = micGateAbs(micSens, !!window.AndroidAudio || !!(stereoInfo && stereoInfo.raw));
-            const th = abs > 0 ? Math.max(0, Math.min(100, ((20 * Math.log10(abs) + 60) / 60) * 100)) : 0; // onMeter 와 같은 눈금
-            const two = stereoInfo && stereoInfo.state === 'stereo';
-            const bar = (lv, label) => (
-              <Box key={label || 'one'} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {label && <Typography sx={{ fontSize: 11.5, color: 'text.secondary', width: 28, flex: 'none' }}>{label}</Typography>}
-                <Box sx={{ position: 'relative', height: 10, flex: 1, borderRadius: 5, bgcolor: (t) => alpha(t.palette.text.primary, 0.08) }}>
-                  <Box sx={{ position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 5, width: `${lv}%`, bgcolor: abs === 0 || lv >= th ? 'success.main' : 'text.disabled', transition: 'width 80ms linear' }} />
-                  {abs > 0 && <Box sx={{ position: 'absolute', top: -3, bottom: -3, width: 2, borderRadius: 1, left: `calc(${th}% - 1px)`, bgcolor: 'error.main' }} />}
-                </Box>
-              </Box>
-            );
-            return (
-              <Box sx={{ mt: -2, mb: 3 }}>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  {two ? [bar(level, '나'), bar(level2, '상대')] : bar(level)}
-                </Box>
-                <Typography sx={{ fontSize: 11.5, color: 'text.secondary', mt: 0.75 }}>
-                  {abs > 0 ? '지금 입력 크기 — 빨간 선을 넘는 소리만 인식합니다. 평소처럼 말할 때는 넘고, 떨어져서 말할 때는 못 넘게 맞추세요.' : '지금 입력 크기 — 100이면 모든 소리를 인식합니다.'}
-                  {two ? ' 두 채널에 같은 기준이 적용됩니다.' : ''}
-                </Typography>
-              </Box>
-            );
-          })()}
+            onChange={(v) => setPref('fontScale', Math.round(v * 10) / 10)} />
           {cfg.pipeline === 'desk' && (
-            /* 게스트 마이크(2채널) 근접 게이트 — 호스트 민감도 바로 아래 배치. 태블릿 마이크는 서버 경유, PC 직결(2대 모드)은 로컬에 즉시 반영 */
-            <SxSlider label="게스트 마이크 민감도" hint="100=모든 소리, 낮출수록 게스트 마이크 가까이의 큰 소리에만 반응(호스트 발화 누화·안내방송 무시). 기본 50. 번역 중에도 바로 적용됩니다. 태블릿 마이크·PC 직결 마이크 모두에 적용." value={guestSens} min={0} max={100} step={1} disabled={false}
-              fmt={(v) => String(v)}
-              onChange={(v) => { setGuestSens(v); localStorage.setItem('kac-desk-guest-sens', String(v)); if (recRef.current && recRef.current.setGuestSens) recRef.current.setGuestSens(v); }} />
-          )}
-          <SettingsCap>실험 기능 (β)</SettingsCap>
-          {!window.AndroidAudio && (
-            <InfoToggle
-              label="잡음 제거 강화 (RNNoise·β)"
-              hint="브라우저 기본 잡음 억제 대신 신경망(RNNoise)으로 배경 소음(에어컨·웅성거림)을 걸러냅니다. 지향성 마이크가 없는 곳에서 배경 소음이 심할 때 켜 보세요. 사람 목소리 누화는 못 거르므로 민감도 게이트는 그대로 필요합니다. 데스크는 즉시 재적용, 일반 세션은 다음 시작부터. 이 기기에 저장됩니다."
-              checked={rnnoise}
-              disabled={false}
-              onChange={(e) => {
-                const v = e.target.checked;
-                setRnnoiseOpt(v);
-                localStorage.setItem('kac-rnnoise', v ? '1' : '0');
-                if (cfg.pipeline === 'desk') restartCapture(); // 상시 캡처는 새 구성으로 재시작
-              }}
-            />
-          )}
-          {(cfg.pipeline === 'soniox' || cfg.pipeline === 'desk') && (
-            <InfoToggle
-              label="단독 응답어 생략"
-              hint="켜면 '네. / Yes. / Okay.'처럼 응답어 하나뿐인 발화를 기록에 남기지 않습니다(회의록 간소화). 문장에 섞인 응답어는 그대로 두며, 번역 중에도 바로 적용됩니다. 기본 꺼짐(모두 기록)."
-              checked={dropAcks}
-              disabled={false}
-              onChange={(e) => { const v = e.target.checked; setDropAcks(v); localStorage.setItem('kac-drop-acks', v ? '1' : '0'); if (recRef.current && recRef.current.setDropAcks) recRef.current.setDropAcks(v); }}
-            />
-          )}
-          {(cfg.pipeline === 'soniox' || cfg.pipeline === 'desk') && (
-            <InfoToggle
-              label="저신뢰 자동 교정 (GPT·β)"
-              hint="음성인식이 연속으로 흔들린 발화만 GPT가 대화 맥락·용어를 보고 원문을 교정해 다시 번역합니다(카드가 잠시 후 바뀜). 명백한 오인식만 고치고 불확실하면 그대로 둡니다. 교정 시 GPT 호출 비용이 추가되며, 이미 재생된 TTS 음성은 바뀌지 않습니다. 번역 중에도 바로 적용. 기본 꺼짐."
-              checked={confFix}
-              disabled={false}
-              onChange={(e) => { const v = e.target.checked; setConfFix(v); localStorage.setItem('kac-conf-fix', v ? '1' : '0'); if (recRef.current && recRef.current.setConfFix) recRef.current.setConfFix(v); }}
-            />
-          )}
-          {cfg.pipeline === 'soniox' && ttsAllowed && ttsOn && (
             <>
-              <SettingsCap>음성 출력</SettingsCap>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                {ttsAllowed && ttsOn && (
-                  <Field label="TTS 음성">
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Select size="small" value={gender} disabled={recording} onChange={(e) => { setGender(e.target.value); localStorage.setItem('kac-sx-gender', e.target.value); }} sx={{ minWidth: 110 }}>
-                        <MenuItem value="f">여성</MenuItem>
-                        <MenuItem value="m">남성</MenuItem>
-                      </Select>
-                      <Tooltip title="선택한 음성을 미리 들어봅니다">
-                        <span>
-                          <IconButton size="small" onClick={previewVoice} disabled={previewing} sx={{ border: 1, borderColor: 'divider' }}>
-                            <VolumeUpIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                  </Field>
-                )}
-                <InfoToggle
-                  label="뷰어에게만 보내기"
-                  hint="켜면 이 기기에서는 음성을 재생하지 않고, 링크(QR)로 접속한 뷰어의 '듣기'로만 보냅니다. 듣는 사람은 각자 폰과 이어폰으로 자기 언어 음성만 듣습니다. 설명자 기기 스피커 소리가 마이크로 다시 들어가지 않습니다. 번역 중에도 바로 적용됩니다."
-                  checked={ttsViewerOnly}
-                  disabled={false}
-                  onChange={(e) => { const v = e.target.checked; setTtsViewerOnly(v); localStorage.setItem('kac-tts-viewer-only', v ? '1' : '0'); if (recRef.current && recRef.current.setTts) recRef.current.setTts(ttsOn, gender, !v); }}
-                />
-              </Box>
-            </>
-          )}
-          {(cfg.pipeline === 'soniox' || cfg.pipeline === 'desk') && (
-            <>
-              <SettingsCap>발화 인식 (끊김 조절)</SettingsCap>
-              {/* 데스크는 상시 캡처라 disabled 로 두면 영영 못 바꿈 → 값 변경 후 0.9초 뒤 자동 재캡처로 적용 */}
-              <SxSlider label="종료 민감도" hint={'높을수록 더 자주/빨리 끊김' + (cfg.pipeline === 'desk' ? ' (변경 시 잠시 후 자동 재적용)' : '')} value={sxSens} min={-1} max={1} step={0.1} disabled={cfg.pipeline !== 'desk' && recording}
-                fmt={(v) => (v > 0 ? '+' : '') + v.toFixed(1)}
-                onChange={(v) => { setSxSens(v); localStorage.setItem('kac-sx-sens', String(v)); if (cfg.pipeline === 'desk') scheduleRestart(); }} />
-              <SxSlider label="최대 지연" hint={'무음 후 이 시간 안에 강제 종료(ms)' + (cfg.pipeline === 'desk' ? ' (변경 시 잠시 후 자동 재적용)' : '')} value={sxMaxDelay} min={500} max={3000} step={100} disabled={cfg.pipeline !== 'desk' && recording}
-                fmt={(v) => v + 'ms'}
-                onChange={(v) => { setSxMaxDelay(v); localStorage.setItem('kac-sx-maxdelay', String(v)); if (cfg.pipeline === 'desk') scheduleRestart(); }} />
-              <SxSlider label="지연 레벨" hint={'높을수록 저지연(끊김↑, 정확도↓)' + (cfg.pipeline === 'desk' ? ' (변경 시 잠시 후 자동 재적용)' : '')} value={sxLatency} min={0} max={3} step={1} disabled={cfg.pipeline !== 'desk' && recording}
+              <SxSlider label="안내원 마이크 민감도" hint="100=모든 소리(기본), 낮출수록 조용한 소리 무시(주변소음·속삭임 차단). 주변 잡담이 자막에 섞이면 낮추세요 — 너무 낮으면 말하는 중간이 끊깁니다. 번역 중에도 바로 적용됩니다." value={micSens} min={0} max={100} step={1} disabled={false}
                 fmt={(v) => String(v)}
-                onChange={(v) => { setSxLatency(v); localStorage.setItem('kac-sx-latency', String(v)); if (cfg.pipeline === 'desk') scheduleRestart(); }} />
+                onChange={(v) => { setMicSens(v); localStorage.setItem('kac-mic-sens', String(v)); if (recRef.current && recRef.current.setMicSens) recRef.current.setMicSens(v); }} />
+              <SxSlider label="여객 마이크 민감도" hint="100=모든 소리, 낮출수록 게스트 마이크 가까이의 큰 소리에만 반응(호스트 발화 누화·안내방송 무시). 기본 50. 번역 중에도 바로 적용됩니다. 태블릿 마이크·PC 직결 마이크 모두에 적용." value={guestSens} min={0} max={100} step={1} disabled={false}
+              fmt={(v) => String(v)}
+                onChange={(v) => { setGuestSens(v); localStorage.setItem('kac-desk-guest-sens', String(v)); if (recRef.current && recRef.current.setGuestSens) recRef.current.setGuestSens(v); }} />
             </>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button variant="contained" onClick={() => setSxSettingsOpen(false)}>닫기</Button>
+          <Button onClick={() => setSxSettingsOpen(false)}>닫기</Button>
         </DialogActions>
       </Dialog>
 
@@ -1075,10 +914,11 @@ export default function TranslateView({ session: initial, onBack, mobile = false
       onDelete: async () => { await api.remove(initial.id); onBack(); },
       getQr: () => (qr ? Promise.resolve(qr) : api.qr(initial.id).then((r) => { setQr(r); return r; })),
       onSaveTranscript: downloadTranscript,
+      onVolume: (v) => { setVolume(v); try { localStorage.setItem('kac-vol', String(v)); } catch {} if (recRef.current && recRef.current.setVolume) recRef.current.setVolume(v); },
+      onViewerTts: (v) => { setViewerTts(v); api.patch(initial.id, { viewerTts: v }).catch(() => {}); },
       onViewerOnly: (v) => { setTtsViewerOnly(v); localStorage.setItem('kac-tts-viewer-only', v ? '1' : '0'); if (recRef.current && recRef.current.setTts) recRef.current.setTts(ttsOn, gender, !v); },
       onMicSens: (v) => { setMicSens(v); setPref('micSens', v); if (recRef.current && recRef.current.setMicSens) recRef.current.setMicSens(v); },
       onMicSens2: (v) => { setMicSens2(v); setPref('micSens2', v); if (recRef.current && recRef.current.setMicSens2) recRef.current.setMicSens2(v); },
-      onMicAuto: (v) => { setMicAuto(v); setPref('micAuto', v); if (recRef.current && recRef.current.setMicAuto) recRef.current.setMicAuto(v); },
       // TTS 음성(여성/남성) — 번역 중에도 바로(다음 문장부터) 반영, 앱 설정과 같은 값
       onGender: (g) => { setGender(g); setPref('ttsGender', g); if (recRef.current && recRef.current.setTts) recRef.current.setTts(ttsOn, g, !ttsViewerOnly); },
     };
@@ -1106,7 +946,6 @@ export default function TranslateView({ session: initial, onBack, mobile = false
           level2={level2}
           micSens={micSens}
           micSens2={micSens2 == null ? micSens : micSens2}
-          micAuto={micAuto}
           gender={gender}
           micNative={nativeApp || !!(stereoInfo && stereoInfo.raw)}
           ttsOn={ttsOn}
@@ -1121,8 +960,10 @@ export default function TranslateView({ session: initial, onBack, mobile = false
           sxB={sxB}
           recStartAt={recStartAt}
           fontScale={fontScale}
+          volume={volume}
+          viewerTts={viewerTts}
           scrollRef={scrollRef}
-          inCodes={LANGS.map((l) => l.code)}
+          inCodes={['auto', ...SX_LANGS.map((l) => l.code)]}
           sxCodes={SX_LANGS.map((l) => l.code)}
           stereoInfo={stereoInfo}
           onBack={onBack}
@@ -1595,7 +1436,7 @@ function PartialLine({ side, text, scale = 1 }) {
 // 양방향(dir): 언어1 발화='a'(액센트) · 언어2 발화='b'(무채색) / 데스크: 게스트='a' · 호스트='b'.
 // memo: 마이크 미터 등 무관한 상태 변경 때 수백 개 행이 재렌더되지 않도록
 // (저신뢰 단어 하이라이트 표시(TokenizedSource)는 사용자 요청으로 삭제 — toks 기록 자체는
-//  confFix·품질 평가용으로 서버에 계속 저장된다.)
+//  품질 평가용으로 서버에 계속 저장된다.)
 const Row = React.memo(function Row({ side, text, source, dir, scale = 1, draft = false }) {
   const isMic = side === 'right'; // 마이크 입력
   const pending = !text && !!source; // 번역 대기 중 → 원문을 흐리게

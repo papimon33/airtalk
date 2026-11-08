@@ -9,7 +9,7 @@ import ButtonBase from '@mui/material/ButtonBase';
 import InputBase from '@mui/material/InputBase';
 import CircularProgress from '@mui/material/CircularProgress';
 import { alpha } from '@mui/material/styles';
-import { useT, endonym } from '../shared/i18n.js';
+import { useT, endonym, langName } from '../shared/i18n.js';
 import { openOverlay, closeOverlay } from './backstack.js';
 import { BRAND } from '../shared/brand.js';
 import { MOBILE_UI } from '../shared/env.js';
@@ -29,10 +29,12 @@ export function rel(ts, t) {
 }
 
 // 언어 고르는 목록: 큰 글씨 = 그 언어 자신의 이름, 작은 글씨 = 화면 언어로 부른 이름(같으면 생략)
+// 언어 목록 한 줄: 화면 언어로 부른 이름 + 작은 영어 이름(한국어 · Korean). 영어 화면이면 그 언어 자신의 이름(Japanese · 日本語).
 export function langOptions(codes, t) {
   return codes.map((code) => {
-    const label = code === 'auto' ? t('autoDetect') : endonym(code);
-    const sub = code === 'auto' ? '' : t.lang(code);
+    if (code === 'auto') return { code, label: t('autoDetect'), sub: '' };
+    const label = t.lang(code);
+    const sub = t.ui === 'en' ? endonym(code) : langName(code, 'en');
     return { code, label, sub: sub && sub !== label ? sub : '' };
   });
 }
@@ -55,7 +57,7 @@ export function useBackClose(open, onClose) {
    layout(2채널일 때): 'mono' = 두 채널이 같은 신호(수신기 모노 모드의 복사본 — 조용할 때 잔잡음까지 똑같다),
    'stereo' = 두 채널이 따로 들어옴(잡음이 서로 다름), null = 아직 모름(신호가 완전한 0 등). 말하기 전에도 판별된다. */
 const toDb = (rms) => Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-8) + 60) / 60) * 100));
-export function useIdleMeter(active, stereo = false) {
+export function useIdleMeter(active, stereo = false, deviceId = '') {
   const [lv, setLv] = useState({ l: null, r: null, layout: null });
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
   useEffect(() => {
@@ -114,7 +116,7 @@ export function useIdleMeter(active, stereo = false) {
       if (!ok) { window.__kacNA = null; window.__kacNA2 = null; return undefined; }
       stopFn = () => { try { a.stop(); } catch {} window.__kacNA = null; window.__kacNA2 = null; };
     } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      navigator.mediaDevices.getUserMedia({ audio: deviceId ? { deviceId: { exact: deviceId } } : true }).then((stream) => {
         if (dead) { stream.getTracks().forEach((tr) => tr.stop()); return; }
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const an = ctx.createAnalyser();
@@ -134,7 +136,7 @@ export function useIdleMeter(active, stereo = false) {
       }).catch(() => {});
     }
     return () => { dead = true; if (stopFn) stopFn(); };
-  }, [run, stereo]);
+  }, [run, stereo, deviceId]);
   return lv;
 }
 
@@ -418,7 +420,8 @@ function sensAtLevel(v, native) {
   const k = native ? Math.log(abs / 0.004) / Math.log(50) : (abs - 0.004) / 0.03;
   return Math.max(0, Math.min(100, 100 - 100 * k));
 }
-export function SensSlider({ value, onChange, level, native, label, hint }) {
+// compact: PC 조작 바의 작은 설정 창용(글자·손잡이를 작게)
+export function SensSlider({ value, onChange, level, native, label, hint, compact }) {
   const ref = useRef(null);
   const x = 100 - value; // 왼쪽 = 민감도 100
   const lx = level == null ? null : 100 - sensAtLevel(level, native);
@@ -437,10 +440,10 @@ export function SensSlider({ value, onChange, level, native, label, hint }) {
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); onChange(Math.max(0, value - 1)); }
   };
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, px: 2.25, pt: 1.75, pb: 1.75 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: compact ? 0.5 : 1.25, px: compact ? 1.5 : 2.25, pt: compact ? 1 : 1.75, pb: compact ? 1 : 1.75 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <Typography sx={{ fontSize: 16, fontWeight: 700 }}>{label}</Typography>
-        <Typography sx={{ fontSize: 14.5, fontWeight: 700, color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
+        <Typography sx={{ fontSize: compact ? 13.5 : 16, fontWeight: compact ? 600 : 700 }}>{label}</Typography>
+        <Typography sx={{ fontSize: compact ? 12.5 : 14.5, fontWeight: 700, color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
       </Box>
       <Box
         ref={ref}
@@ -453,14 +456,14 @@ export function SensSlider({ value, onChange, level, native, label, hint }) {
         onPointerDown={onDown}
         onPointerMove={(e) => { if (e.buttons) setFrom(e.clientX); }}
         onKeyDown={onKey}
-        sx={{ position: 'relative', height: 30, display: 'flex', alignItems: 'center', touchAction: 'none', cursor: 'pointer', outline: 'none', '&:focus-visible .knob': { boxShadow: (t) => `0 0 0 4px ${t.palette.action.focus}` } }}
+        sx={{ position: 'relative', height: compact ? 24 : 30, display: 'flex', alignItems: 'center', touchAction: 'none', cursor: 'pointer', outline: 'none', '&:focus-visible .knob': { boxShadow: (t) => `0 0 0 4px ${t.palette.action.focus}` } }}
       >
-        <Box sx={{ position: 'absolute', left: 0, right: 0, height: 8, borderRadius: '999px', overflow: 'hidden', display: 'flex' }}>
+        <Box sx={{ position: 'absolute', left: 0, right: 0, height: compact ? 6 : 8, borderRadius: '999px', overflow: 'hidden', display: 'flex' }}>
           <Box sx={{ width: `${x}%`, bgcolor: (t) => (t.palette.mode === 'dark' ? '#7A6532' : '#F3D38D') }} />
           <Box sx={{ flex: 1, bgcolor: (t) => (t.palette.mode === 'dark' ? '#2F6B48' : '#8FD3A8') }} />
         </Box>
         {lx != null && <Box sx={{ position: 'absolute', left: 0, width: `${Math.max(0, lx)}%`, height: 3, borderRadius: '999px', bgcolor: 'success.dark', transition: 'width 80ms linear' }} />}
-        <Box className="knob" sx={{ position: 'absolute', left: `calc(${x}% - 12px)`, width: 24, height: 24, borderRadius: '999px', bgcolor: 'background.paper', border: 2, borderColor: 'text.primary', boxSizing: 'border-box', boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
+        <Box className="knob" sx={{ position: 'absolute', left: `calc(${x}% - ${compact ? 9 : 12}px)`, width: compact ? 18 : 24, height: compact ? 18 : 24, borderRadius: '999px', bgcolor: 'background.paper', border: 2, borderColor: 'text.primary', boxSizing: 'border-box', boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
       </Box>
       {hint && <Typography sx={{ fontSize: 12.5, color: 'text.secondary', lineHeight: 1.5 }}>{hint}</Typography>}
     </Box>

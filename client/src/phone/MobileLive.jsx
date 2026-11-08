@@ -3,7 +3,7 @@
    · 위: 세션 이름(표시만) · 오른쪽에 이 폰 소리(스피커)·링크 공유(QR)
    · 아래: 떠 있는 회색 조작판(음소거·TTS·시작/중지·언어·종료) — 위로 밀거나 손잡이를 누르면 큰 설정(입력·출력·세션)
    · 번역을 시작하면 위·아래를 숨기고 화면을 누르면 4초간 보인다
-   · desktop(PC 새 화면 ?ui=v2): 메뉴 항상 표시, 대화는 가운데 열, 큰 설정은 오른쪽에서. PC 전용 줄(음성 입력·마이크 장치·모드·고급 설정)은 pc/PcRows */
+   · desktop(PC): 위 띠·아래 조작 바는 웹 방식(pc/PcSession.jsx — 묶음 버튼, ⌄ 로 세부 설정, 언어는 늘 보임). 대화·시작 흐름·확인 창은 폰과 같다 */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -20,7 +20,7 @@ import { useT } from '../shared/i18n.js';
 import { CheckIcon, SettingsIcon, MicIcon, MicOffIcon, PlayIcon, QrIcon, LogOutIcon, TranslateIcon, TtsIcon, VolumeOffIcon, VolumeOnIcon } from '../shared/icons.jsx';
 import { BRAND, BRAND_SOFT } from '../shared/brand.js';
 import { api } from '../shared/api.js';
-import { usePcRows } from '../pc/PcRows.jsx';
+import { PcHeader, PcDock } from '../pc/PcSession.jsx';
 
 const BLUE = '#1F5BBF';
 // 조작판 회색(디스코드의 떠 있는 바) — 대화 배경(흰색)과 구분. 버튼은 배경 없이 아이콘만(시작=보라 사각형만 예외).
@@ -181,7 +181,8 @@ export default function MobileLive(p) {
   // 엔진(과금)을 열기 전에 미터만 켜서 송신기 1·2(좌·우)를 확인한다. 확인을 마치면 미터를 끄고 네이티브 캡처를 번역 경로에 넘긴다.
   const [starting, setStarting] = useState(false);
   const [checkOpen, setCheckOpen] = useState(false);   // 시작 전 마이크 확인 창
-  const idle = useIdleMeter(checkOpen && !recording && !starting && !p.meterOff, twoway); // meterOff: PC 소리만 들을 때(마이크 권한을 묻지 않게)
+  const [micTest, setMicTest] = useState(false);       // PC 마이크 ⌄ '입력 테스트' — 번역 전에 입력 크기를 미리 본다
+  const idle = useIdleMeter((checkOpen || micTest) && !recording && !starting && !p.meterOff, twoway, (p.pc && p.pc.micId) || ''); // meterOff: 시스템 오디오만 들을 때(마이크 권한을 묻지 않게)
   const idleOn = idle.l != null;
   // 대기 중(마이크 꺼짐) 2채널 여부는 이 기기에 기억된 판별값으로 — audio.js 가 장치 이름별로 'stereo'/'mono' 를 저장한다(앱은 장치 이름을 캡처 없이 안다)
   const memStereo = useMemo(() => {
@@ -366,7 +367,6 @@ export default function MobileLive(p) {
     finally { setPreviewing(null); }
   };
   const voiceName = (g) => (g === 'm' ? t('male') : t('female'));
-  const pcx = usePcRows(desktop ? p.pc : null, t, setToast); // PC 전용 줄(폰에선 빈 값)
 
   const controls = (
     <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${p.ttsPerm ? 5 : 4}, minmax(0, 1fr))`, alignItems: 'center' }}>
@@ -410,7 +410,6 @@ export default function MobileLive(p) {
         </TopBtn>
       )}
       <TopBtn label={t('shareLink')} onClick={() => setSheet('share')}><QrIcon /></TopBtn>
-      {desktop && <TopBtn label={t('openSettings')} onClick={() => setPanel(true)} active={panel}><SettingsIcon /></TopBtn>}
     </Box>
   );
 
@@ -467,8 +466,13 @@ export default function MobileLive(p) {
         }); })()}
       </Box>
 
-      {top}
-      {bottom}
+      {desktop ? <PcHeader t={t} p={p} onLeave={leave} onShare={() => setSheet('share')} toast={setToast} /> : top}
+      {desktop ? (
+        <PcDock t={t} p={p} c={{
+          muteOn, toggleMute, ttsMade, toggleTts, hereOn, toggleSpeaker, start, starting,
+          dual, twoCh, chanState, liveLevel, liveLevel2, voiceName, preview, previewing, toast: setToast, setSheet, micTest, setMicTest,
+        }} />
+      ) : bottom}
       {banner}
       {recording && !bars && <Box aria-label={twoway ? t('interpreting') : t('translating')} sx={{ position: 'absolute', zIndex: 2, top: 'calc(16px + env(safe-area-inset-top))', right: 16, width: 8, height: 8, borderRadius: '999px', bgcolor: p.connState === 'reconn' ? 'warning.main' : 'error.main' }} />}
       {hint && !bars && (
@@ -478,23 +482,18 @@ export default function MobileLive(p) {
       )}
 
       {/* 큰 설정 — 조작판을 위로 민 화면(디스코드). 맨 위에 같은 조작 버튼, 아래에 입력·출력·세션 */}
-      <SwipeableDrawer anchor={desktop ? 'right' : 'bottom'} open={panel} onOpen={() => setPanel(true)} onClose={() => setPanel(false)} disableSwipeToOpen disableDiscovery ModalProps={{ keepMounted: false }}
-        slotProps={{ paper: { sx: desktop
-          ? { width: 420, maxWidth: '100%', height: '100%', borderTopLeftRadius: '24px', borderBottomLeftRadius: '24px', bgcolor: PANEL_BG, backgroundImage: 'none', pt: 2 }
-          : { height: 'calc(100dvh - 64px)', borderTopLeftRadius: '28px', borderTopRightRadius: '28px', bgcolor: PANEL_BG, backgroundImage: 'none' } } }}>
+      {!desktop && <SwipeableDrawer anchor="bottom" open={panel} onOpen={() => setPanel(true)} onClose={() => setPanel(false)} disableSwipeToOpen disableDiscovery ModalProps={{ keepMounted: false }}
+        slotProps={{ paper: { sx: { height: 'calc(100dvh - 64px)', borderTopLeftRadius: '28px', borderTopRightRadius: '28px', bgcolor: PANEL_BG, backgroundImage: 'none' } } }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
-          {!desktop && <Box sx={{ alignSelf: 'center', width: 40, height: 4, borderRadius: '999px', bgcolor: 'divider', mt: 1.25, mb: 1.5, flex: 'none' }} />}
+          <Box sx={{ alignSelf: 'center', width: 40, height: 4, borderRadius: '999px', bgcolor: 'divider', mt: 1.25, mb: 1.5, flex: 'none' }} />
           <Box sx={{ px: 1.5, pb: 1.5, flex: 'none' }}>{controls}</Box>
           <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 2, pb: 'calc(24px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 2 }}>
             <Group title={t('secInput')}>
-              {desktop ? pcx.input : <OptionRow label={t('inputDevice')} value={micCurrentName(mic, t)} onClick={() => setSheet('device')} />}
-              <OptionRow toggle label={t('autoSens')} onClick={() => p.onMicAuto(!p.micAuto)}
-                value={<Switch edge="end" checked={!!p.micAuto} tabIndex={-1} slotProps={{ input: { 'aria-label': t('autoSens') } }} sx={brandSwitch} />} />
-              {p.micAuto && <Typography sx={{ fontSize: 12.5, color: 'text.secondary', px: 2.25, py: 1.5, lineHeight: 1.5 }}>{t('autoSensHint')}</Typography>}
+              <OptionRow label={t('inputDevice')} value={micCurrentName(mic, t)} onClick={() => setSheet('device')} />
               {/* 마이크 2개로 나눠 들을 때: 마이크 1·2 감도를 따로 — 막대(진한 선)도 마이크별 입력 크기 */}
-              {!p.micAuto && dual && <SensSlider label={t('tx1')} value={p.micSens} native={p.micNative} level={liveLevel} onChange={p.onMicSens} />}
-              {!p.micAuto && dual && <SensSlider label={t('tx2')} value={p.micSens2} native={p.micNative} level={liveLevel2} hint={t('inputSensHint')} onChange={p.onMicSens2} />}
-              {!p.micAuto && !dual && <SensSlider label={t('inputSens')} value={p.micSens} native={p.micNative} level={liveLevel} hint={t('inputSensHint')} onChange={p.onMicSens} />}
+              {dual && <SensSlider label={t('tx1')} value={p.micSens} native={p.micNative} level={liveLevel} onChange={p.onMicSens} />}
+              {dual && <SensSlider label={t('tx2')} value={p.micSens2} native={p.micNative} level={liveLevel2} onChange={p.onMicSens2} />}
+              {!dual && <SensSlider label={t('inputSens')} value={p.micSens} native={p.micNative} level={liveLevel} onChange={p.onMicSens} />}
               {twoCh && <Typography sx={{ fontSize: 12.5, color: 'text.secondary', px: 2.25, py: 1.5, lineHeight: 1.5, wordBreak: 'keep-all' }}>{stereoMsg(chanState, t)}</Typography>}
             </Group>
             {p.ttsPerm && (
@@ -507,14 +506,11 @@ export default function MobileLive(p) {
               <OptionRow label={t('viewers')} value={t('viewersCount', { n: p.viewerCount || 0 })} onClick={() => setSheet('share')} />
               <OptionRow label={t('saveTranscript')} onClick={() => p.onSaveTranscript()} disabled={!p.canSave} />
               <OptionRow label={t('clearHistory')} onClick={() => setSheet('clear')} disabled={!p.canSave} />
-              {pcx.session}
               <OptionRow label={t('deleteSession')} danger onClick={() => setSheet('delete')} />
             </Group>
           </Box>
         </Box>
-      </SwipeableDrawer>
-
-      {pcx.sheets}
+      </SwipeableDrawer>}
 
       <MicCheckDialog open={checkOpen} one={micOne} l={idle.l} r={idle.r} checked={checked} t={t}
         onStart={() => (micOne ? passCheck(false, idle.r != null) : passCheck(true, false))}

@@ -40,14 +40,13 @@ export const PencilIcon = wrap(Pencil, 'PencilIcon');
 export const TrashIcon = wrap(Trash2, 'TrashIcon');
 
 // 'TTS' 글자 모양 아이콘(둥근 선, Lucide 와 같은 굵기) — 하단 TTS 버튼. off 면 사선.
+// TTS(번역 음성) — 음성 파형(Lucide audio-lines 와 같은 선). off = 사선. 다른 아이콘과 같은 한 장의 svg 라 줄이 맞는다
 export const TtsIcon = forwardRef(function TtsIcon({ sx, off, ...rest }, ref) {
   return (
-    <Box component="svg" ref={ref} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    <Box component="svg" ref={ref} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
       sx={{ width: '1em', height: '1em', fontSize: 24, flex: 'none', ...sx }} {...rest}>
-      <path d="M1.8 7.5h5.6M4.6 7.5v9" />
-      <path d="M8.6 7.5h5.6M11.4 7.5v9" />
-      <path d="M21.6 9c-.5-1-1.5-1.6-2.7-1.6-1.5 0-2.6.8-2.6 2 0 2.8 5.6 1.6 5.6 4.6 0 1.3-1.2 2.2-2.9 2.2-1.2 0-2.3-.6-2.9-1.5" />
-      {off && <path d="M3 21L21 3" />}
+      <path d="M2 10v3" /><path d="M6 6v11" /><path d="M10 3v18" /><path d="M14 8v7" /><path d="M18 5v13" /><path d="M22 10v3" />
+      {off && <path d="M3 21L21 3" strokeWidth={2.1} />}
     </Box>
   );
 });

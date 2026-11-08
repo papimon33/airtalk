@@ -1,59 +1,7 @@
 /* 오디오 캡처 + 무음감지(VAD) + 서버 WS 송신.
    mic=오른쪽, system=왼쪽. system 은 전체화면+시스템오디오 공유로 PC 전체 소리. */
 
-/* ---- RNNoise(신경망 잡음 억제, 옵션) ----
-   브라우저 기본 NS 대신 사용한다(이중 적용 금지 — 켜면 getUserMedia noiseSuppression:false).
-   48kHz·480샘플 프레임 전용이라 AudioContext 를 48kHz 로 강제해 리샘플 없이 처리한다.
-   wasm(≈1.9MB 별도 청크)은 옵션을 켠 세션에서만 동적 로드. 마이크 계열 소스에만 적용(시스템 오디오 제외). */
-let rnnModP = null;
-function loadRnnoise() {
-  if (!rnnModP) {
-    rnnModP = import('@jitsi/rnnoise-wasm/dist/rnnoise-sync.js').then(async (m) => {
-      const mod = m.default();
-      try { await mod.ready; } catch {}
-      return mod;
-    });
-    rnnModP.catch(() => { rnnModP = null; }); // 로드 실패 시 다음 시작에서 재시도
-  }
-  return rnnModP;
-}
-const RNN_FRAME = 480; // RNNoise 고정 프레임(48kHz 기준 10ms)
-function createDenoiser(mod) {
-  const st = mod._rnnoise_create(0);
-  const inPtr = mod._malloc(RNN_FRAME * 4);
-  const outPtr = mod._malloc(RNN_FRAME * 4);
-  let carry = new Float32Array(0);
-  let dead = false;
-  return {
-    // 입력 Float32(±1) → 정제된 Float32(±1). 480샘플 정렬 잔여분은 다음 호출로 이월(≤10ms 지연)
-    process(input) {
-      if (dead) return input;
-      const buf = new Float32Array(carry.length + input.length);
-      buf.set(carry);
-      buf.set(input, carry.length);
-      const nFrames = Math.floor(buf.length / RNN_FRAME);
-      const out = new Float32Array(nFrames * RNN_FRAME);
-      for (let f = 0; f < nFrames; f++) {
-        // RNNoise 는 ±32768 스케일 float 를 기대. HEAPF32 는 메모리 증가 시 바뀌므로 매 프레임 새로 잡는다
-        const ih = mod.HEAPF32.subarray(inPtr >> 2, (inPtr >> 2) + RNN_FRAME);
-        for (let i = 0; i < RNN_FRAME; i++) ih[i] = buf[f * RNN_FRAME + i] * 32768;
-        mod._rnnoise_process_frame(st, outPtr, inPtr);
-        const oh = mod.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + RNN_FRAME);
-        for (let i = 0; i < RNN_FRAME; i++) out[f * RNN_FRAME + i] = oh[i] / 32768;
-      }
-      carry = buf.slice(nFrames * RNN_FRAME);
-      return out;
-    },
-    destroy() {
-      if (dead) return;
-      dead = true;
-      try { mod._rnnoise_destroy(st); } catch {}
-      try { mod._free(inPtr); mod._free(outPtr); } catch {}
-    },
-  };
-}
-
-async function getSources(mode, agcOff, mic2, nsOff, micId, stereoWanted) {
+async function getSources(mode, agcOff, mic2, micId, stereoWanted) {
   const list = [];
   if (mode === 'mic' || mode === 'both') {
     if (window.AndroidAudio) {
@@ -63,8 +11,7 @@ async function getSources(mode, agcOff, mic2, nsOff, micId, stereoWanted) {
     } else if (mic2 && mic2.guest) {
       // 데스크 2마이크(PC): 직원·여객 지향성 마이크를 각각의 입력 장치로 연다 —
       // 여객 오디오는 별도 WS(src=guestmic)로 서버 여객 채널에 공급(뷰어 태블릿 마이크와 동일 경로).
-      // nsOff(RNNoise 사용 시): 브라우저 NS 를 꺼서 이중 잡음처리로 음성이 뭉개지는 것 방지
-      const base = { echoCancellation: true, noiseSuppression: !nsOff };
+      const base = { echoCancellation: true, noiseSuppression: true };
       let staff;
       try {
         staff = await navigator.mediaDevices.getUserMedia({
@@ -89,7 +36,7 @@ async function getSources(mode, agcOff, mic2, nsOff, micId, stereoWanted) {
       // autoGainControl(AGC): 볼륨 게이트(민감도<100) 사용 시엔 반드시 꺼야 한다 —
       // 브라우저 AGC 가 속삭임·먼 소리를 보통 음량으로 증폭한 '뒤에' 게이트에 도달해
       // RMS 임계를 아무리 낮춰도(1이어도) 걸러지지 않던 원인. 100(게이트 없음)이면 기존대로 켠다.
-      const base = { echoCancellation: true, noiseSuppression: !nsOff, autoGainControl: !agcOff };
+      const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: !agcOff };
       let mic;
       try {
         // micId: 사용자가 고른 마이크 장치(실시간 번역 옵션) — 뽑혀 있으면 기본 장치로 폴백
@@ -184,10 +131,9 @@ export function micGateAbs(sens, native) {
   return native ? 0.004 * Math.pow(50, k) : 0.004 + k * 0.03;
 }
 
-const AUTO_GATE_RATIO = 2.5; // 자동 감도: 소음 바닥의 2.5배(약 +8dB) 이상만 말소리로
 
 export async function startRecorder(opts) {
-  const { sessionId, mode, inLang, outLang, pipeline, onMessage, onMeter, audioOut, volume, micSens, sxSens, sxMaxDelay, sxLatency, sxMode, sxTarget, sxA, sxB, tts, gender, diar, deskLangs, deskIdle, deskGuestSens } = opts;
+  const { sessionId, mode, inLang, outLang, pipeline, onMessage, onMeter, audioOut, volume, micSens, sxMode, sxTarget, sxA, sxB, tts, gender, diar, deskLangs, deskIdle, deskGuestSens } = opts;
   // 마이크 음성인식 민감도(0~100): 100=가장 민감(게이트 없음), 낮출수록 조용한 소리를 무시.
   //  · 게이트 기준은 RMS(프레임 평균 음량) — peak(순간 최대) 는 속삭임의 자음(ㅅ·ㅌ) 스파이크에도
   //    열려 버려 소용없었다. RMS 는 '지속적으로 일정 음량 이상'일 때만 열려 속삭임·주변소음을 잘 거른다.
@@ -197,13 +143,9 @@ export async function startRecorder(opts) {
   //    대신 '주변 소음 바닥(noiseFloor) 대비 몇 배 큰가'로 판정 → 기기 게인과 무관하게 근접/원거리 구분.
   //    슬라이더(민감도)는 '바닥 대비 배수(ratio)'와 '절대 하한(absMin)'을 조절. 100=게이트 없음.
   let micSensVal = typeof micSens === 'number' ? micSens : 100;
-  // 자동 감도(폰 설정 '자동으로 감도 조절'): 슬라이더 대신 '주변 소음 바닥보다 확실히(약 8dB) 큰 소리'만 인식.
-  // 바닥(noiseFloor)은 조용할 때 빠르게 따라가므로 장소가 바뀌어도 기준이 저절로 맞춰진다. 절대 하한은 최소값.
-  let micAutoVal = !!opts.micAuto;
   let micRatio = 0, micAbsMin = 0, micAbsMinNative = 0;
   // 감도 → [바닥 대비 배수, 절대 하한(브라우저), 절대 하한(앱 원음)]
   const gateOf = (v) => {
-    if (micAutoVal) return [AUTO_GATE_RATIO, 0.004, 0.004];
     if (!(typeof v === 'number' && v < 100)) return [0, 0, 0];
     const k = (100 - v) / 100;         // 0(민감)~1(엄격)
     return [
@@ -224,29 +166,18 @@ export async function startRecorder(opts) {
   // 스테레오 2채널(양방향 통역 + 마이크): 송신기 1번(왼쪽)=나, 2번(오른쪽)=상대로 채널을 나눠 언어 오판을 없앤다.
   // 기기가 진짜로 분리해 보내는지는 소리로 판별하고 결과를 기기별로 기억한다(setupStereo).
   const stereoWanted = !!opts.stereo && pipeline === 'soniox' && sxMode === 'two' && !!sxA && !!sxB && sxA !== sxB && mode === 'mic';
-  // RNNoise(옵션): 마이크 캡처에만 적용(네이티브 앱 제외). 로드 실패 시 브라우저 NS 유지로 폴백
-  let rnnMod = null;
-  if (opts.rnnoise && !window.AndroidAudio && (mode === 'mic' || mode === 'both')) {
-    try { rnnMod = await loadRnnoise(); }
-    catch { try { onMessage({ type: 'status', message: 'RNNoise 로드 실패 — 브라우저 기본 잡음 억제로 동작합니다.' }); } catch {} }
-  }
-  // RNNoise 는 48kHz·480샘플 고정 — AudioContext 를 48kHz 로 강제(미지원이면 RNNoise 포기, NS 복귀)
   const AC = window.AudioContext || window.webkitAudioContext;
   let audioCtx;
-  try { audioCtx = rnnMod ? new AC({ sampleRate: 48000 }) : new AC(); } catch { audioCtx = new AC(); }
-  // 제스처 콘텍스트 소실(RNNoise wasm 로드 지연·iOS 등)로 suspended 로 생성되면 onaudioprocess 가
+  audioCtx = new AC();
+  // 제스처 콘텍스트 소실(iOS 등)로 suspended 로 생성되면 onaudioprocess 가
   // 아예 안 돌아 '진행 중' 표시인 채 무음이 된다 — viewer/desk.html·join.html 과 동일한 resume 방어.
   try { audioCtx.resume && audioCtx.resume().catch(() => {}); } catch {}
   // 모바일 탭 전환·절전 복귀 시 AudioContext 가 suspended 로 남는 경우 자동 재개
   const onVisResume = () => { if (document.visibilityState === 'visible') { try { audioCtx.resume && audioCtx.resume().catch(() => {}); } catch {} } };
   document.addEventListener('visibilitychange', onVisResume);
-  if (rnnMod && audioCtx.sampleRate !== 48000) {
-    rnnMod = null;
-    try { onMessage({ type: 'status', message: '이 브라우저는 48kHz 캡처를 지원하지 않아 RNNoise 없이 동작합니다.' }); } catch {}
-  }
   let sources;
   try {
-    sources = await getSources(mode, micRatio > 0, mic2, !!rnnMod, opts.micId, stereoWanted && !window.AndroidAudio); // 권한 거부 시 throw. 게이트 사용 시 AGC off 시도
+    sources = await getSources(mode, micRatio > 0, mic2, opts.micId, stereoWanted && !window.AndroidAudio); // 권한 거부 시 throw. 게이트 사용 시 AGC off 시도
   } catch (e) {
     try { audioCtx.close(); } catch {} // 먼저 만든 오디오 컨텍스트 회수(권한 거부 시 누수 방지)
     throw e;
@@ -298,13 +229,13 @@ export async function startRecorder(opts) {
     over.in != null ? over.in : inLang
   )}&pipeline=${pipeline}&audioOut=${audioOut ? '1' : '0'}${
     pipeline === 'soniox'
-      ? `&sxSens=${encodeURIComponent(sxSens)}&sxMaxDelay=${encodeURIComponent(sxMaxDelay)}&sxLatency=${encodeURIComponent(sxLatency)}&sxMode=${encodeURIComponent(over.sxMode || sxMode || 'one')}&sxTarget=${encodeURIComponent(over.sxTarget || sxTarget || 'en')}&sxA=${encodeURIComponent(sxA || 'ko')}&sxB=${encodeURIComponent(sxB || 'en')}${
+      ? `&sxMode=${encodeURIComponent(over.sxMode || sxMode || 'one')}&sxTarget=${encodeURIComponent(over.sxTarget || sxTarget || 'en')}&sxA=${encodeURIComponent(sxA || 'ko')}&sxB=${encodeURIComponent(sxB || 'en')}${
           tts ? `&tts=1&gender=${encodeURIComponent(gender || 'f')}` : ''
         }${diar ? '&diar=1' : ''}${over.role ? `&role=${over.role}` : ''}${over.drop ? `&drop=${encodeURIComponent(over.drop)}` : ''}${over.pair ? `&pair=${encodeURIComponent(over.pair)}` : ''}`
       : ''
-  }${opts.dropAcks ? '&dropAcks=1' : ''}${opts.confFix ? '&confFix=1' : ''}${
+  }${
     pipeline === 'desk'
-      ? `&sxSens=${encodeURIComponent(sxSens)}&sxMaxDelay=${encodeURIComponent(sxMaxDelay)}&sxLatency=${encodeURIComponent(sxLatency)}${
+      ? `${
           deskLangs ? `&deskLangs=${encodeURIComponent(deskLangs)}` : ''
         }${deskIdle ? `&deskIdle=${encodeURIComponent(deskIdle)}` : ''}${deskGuestSens != null ? `&deskGuestSens=${encodeURIComponent(deskGuestSens)}` : ''}`
       : ''
@@ -429,15 +360,13 @@ export async function startRecorder(opts) {
   let nativeMicUsed = false; // 네이티브 캡처가 실제로 시작됐는지(stop 에서 브리지 정지용)
   // 녹음 중 변경된 제어 상태 — 자동 재연결 시 새 소켓은 시작 시점 URL 파라미터로 초기화되므로
   // 변경분(TTS on/off, 발화멈춤, 여객 민감도)을 재전송해 서버 상태가 되돌아가는 문제를 막는다
-  const ctlState = { audioOut: null, tts: null, guestSens: null, deskIdle: null, dropAcks: null, confFix: null };
+  const ctlState = { audioOut: null, tts: null, guestSens: null, deskIdle: null };
   const resendState = (sock) => {
     try {
       if (ctlState.tts != null) sock.send(JSON.stringify({ type: 'tts', on: ctlState.tts.on, local: ctlState.tts.local !== false, ...(ctlState.tts.gender ? { gender: ctlState.tts.gender } : {}) }));
       if (ctlState.audioOut != null) sock.send(JSON.stringify({ type: 'audioOut', on: ctlState.audioOut }));
       if (ctlState.guestSens != null) sock.send(JSON.stringify({ type: 'desk-guest-sens', value: ctlState.guestSens }));
       if (ctlState.deskIdle != null) sock.send(JSON.stringify({ type: 'desk-idle', value: ctlState.deskIdle }));
-      if (ctlState.dropAcks != null) sock.send(JSON.stringify({ type: 'dropAcks', on: ctlState.dropAcks }));
-      if (ctlState.confFix != null) sock.send(JSON.stringify({ type: 'confFix', on: ctlState.confFix }));
     } catch {}
   };
 
@@ -536,7 +465,8 @@ export async function startRecorder(opts) {
       if (onMeter) onMeter(rms, peak, isMe ? 'mic' : 'mic2');
       const pcm = floatTo16BitPCM(f);
       const silence = () => new ArrayBuffer(f.length * 2);
-      if ((isMe && muted) || ttsGuard) { if (pipe) sendTo(pipe, silence()); return false; }
+      // 음소거는 마이크 두 개(송신기 1·2) 모두 — 2026-11-08 전엔 내 마이크(1)만 꺼서 상대 마이크 말은 계속 번역됐다
+      if (muted || ttsGuard) { if (pipe) sendTo(pipe, silence()); return false; }
       // 채널별 감도: 송신기 1(나)=micSens, 송신기 2(상대)=micSens2
       const ratio = isMe ? micRatio : micRatio2;
       const absMin = monoProcessed ? (isMe ? micAbsMin : micAbsMin2) : (isMe ? micAbsMinNative : micAbsMinNative2);
@@ -769,8 +699,6 @@ export async function startRecorder(opts) {
 
     const node = audioCtx.createMediaStreamSource(stream);
     const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-    // RNNoise: 마이크 계열 소스만 정제(시스템 오디오는 음악·회의음이라 잡음 억제 부적합)
-    if (rnnMod && src !== 'system') pipe.den = createDenoiser(rnnMod);
     node.connect(proc);
     const g = audioCtx.createGain();
     g.gain.value = 0;
@@ -786,8 +714,7 @@ export async function startRecorder(opts) {
     pipe.gapBuf = [];      // WS 끊김(재연결) 동안 프레임 버퍼(최근 ~2초) — 재연결 시 flush 해 발화 유실 축소
 
     proc.onaudioprocess = (e) => {
-      // RNNoise 사용 시 정제된 신호로 게이트·VAD·전송을 판단(480샘플 정렬 잔여분은 다음 콜백으로 이월)
-      const input = pipe.den ? pipe.den.process(e.inputBuffer.getChannelData(0)) : e.inputBuffer.getChannelData(0);
+      const input = e.inputBuffer.getChannelData(0);
       if (!input.length) return;
       let sum = 0,
         peak = 0;
@@ -828,7 +755,7 @@ export async function startRecorder(opts) {
 
       // 발화 일시정지(mute), 또는 (AEC 미지원 폴백일 때만) TTS 재생 중 자동 음소거: 무음 전송 + keepalive
       // AEC 루프백이 켜져 있으면 재생음이 마이크에서 제거되므로 TTS 중에도 발화 가능(음소거 안 함)
-      // '발화 멈춤'은 내 마이크만 끈다 — PC 소리(system) 채널은 상대 발화라 계속 번역해야 한다
+      // 음소거는 마이크만 끈다 — 시스템 오디오(system) 채널은 화상회의 상대 발화라 계속 번역해야 한다
       // (양방향 통역 'PC 소리+마이크'에서 누르면 상대 말 번역까지 멈추던 버그).
       const micOff = muted && src !== 'system';
       if (micOff || (!aecActive && audioCtx.currentTime < ttsMutedUntil)) {
@@ -897,7 +824,6 @@ export async function startRecorder(opts) {
         if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify({ type: 'stop' }));
       } catch {}
       if (p.proc) p.proc.onaudioprocess = null;
-      if (p.den) p.den.destroy(); // RNNoise 상태·wasm 힙 반납
     }
     streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
     if (nativeMicUsed) { try { window.AndroidAudio.stop(); } catch {} window.__kacNA = null; window.__kacNA2 = null; }
@@ -926,7 +852,7 @@ export async function startRecorder(opts) {
     try { outGain.gain.value = Math.max(0, v); } catch {}
   }
 
-  // 발화 on/off (세션 유지). on=true 면 내 마이크만 일시정지(무음 전송), PC 소리 채널은 계속.
+  // 음소거 on/off (세션 유지). on=true 면 마이크(2채널이면 둘 다)만 일시정지(무음 전송), 시스템 오디오 채널은 계속.
   function setMuted(on) {
     muted = !!on;
   }
@@ -956,21 +882,12 @@ export async function startRecorder(opts) {
     micSens2Val = Number(v);
     calcGate2(micSens2Val);
   }
-  // 자동 감도 켜기/끄기(녹음 중에도) — 켜면 슬라이더 값은 무시하고 주변 소음 기준으로(두 채널 모두)
-  function setMicAuto(on) {
-    micAutoVal = !!on;
-    calcGate(micSensVal);
-    calcGate2(micSens2Val);
-    if (micTrack && micTrack.applyConstraints && !stereoPlan) micTrack.applyConstraints({ autoGainControl: !(micRatio > 0) }).catch(() => {});
-  }
   // 데스크: 여객 마이크 민감도(0~100) — 뷰어 태블릿엔 서버 경유로, 2마이크 모드의 로컬 여객 게이트엔 즉시 반영
   function setGuestSens(v) { ctlState.guestSens = Number(v); calcGuestGate(v); for (const p of pipes) { try { if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify({ type: 'desk-guest-sens', value: Number(v) })); } catch {} } }
   // 데스크: 무음 자동 종료 시간(ms) 실시간 변경 — 상시 캡처 중에도 설정 가능
   function setDeskIdle(ms) { ctlState.deskIdle = Number(ms); for (const p of pipes) { try { if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify({ type: 'desk-idle', value: Number(ms) })); } catch {} } }
   // 고급옵션: 단독 응답어(네/Yes) 기록 생략 — 녹음 중 실시간 토글
-  function setDropAcks(on) { ctlState.dropAcks = !!on; for (const p of pipes) { try { if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify({ type: 'dropAcks', on: !!on })); } catch {} } }
   // 고급옵션: 저신뢰 자동 교정(GPT) — 녹음 중 실시간 토글
-  function setConfFix(on) { ctlState.confFix = !!on; for (const p of pipes) { try { if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify({ type: 'confFix', on: !!on })); } catch {} } }
 
-  return { stop, setAudioOut, setVolume, setMuted, setTts, deskReset, deskStart, setMicSens, setMicSens2, setMicAuto, setGuestSens, setDeskIdle, setDropAcks, setConfFix };
+  return { stop, setAudioOut, setVolume, setMuted, setTts, deskReset, deskStart, setMicSens, setMicSens2, setGuestSens, setDeskIdle };
 }

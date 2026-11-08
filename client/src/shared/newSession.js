@@ -1,11 +1,10 @@
 /* 새 세션의 언어 고르기 — 폰(단계별 시트)과 PC(한 화면 창)가 같은 값·같은 저장 방식을 쓴다. */
 import { useEffect, useState } from 'react';
 import { usePrefs } from './prefs.js';
-import { LANGS } from './theme.js';
 import { SX_LANGS } from '../session/TranslateView.jsx';
 
 const SX_CODES = SX_LANGS.map((l) => l.code);
-const IN_CODES = LANGS.map((l) => l.code); // 'auto'(자동 감지) 포함 — 실시간 번역의 입력 언어 힌트
+const IN_CODES = ['auto', ...SX_CODES]; // 자동 감지 + 지원하는 모든 언어 — 실시간 번역의 입력 언어 힌트
 const p2 = (n) => String(n).padStart(2, '0');
 
 // 이름을 비워 두면 쓰는 기본 이름(날짜·시각 + 모드)

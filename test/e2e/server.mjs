@@ -17,7 +17,7 @@ http.createServer((req, res) => {
   req.on('data', (d) => { body += d; });
   req.on('end', () => {
     const c = open().pop();
-    if (req.url === '/conns') return res.end(JSON.stringify({ open: open().length, total: fake.connections.length, config: c ? c.config : null }));
+    if (req.url === '/conns') return res.end(JSON.stringify({ open: open().length, total: fake.connections.length, config: c ? c.config : null, loud: c ? c.loudFrames : 0, audio: c ? c.audioBytes : 0, loudAll: open().reduce((n, x) => n + x.loudFrames, 0), audioAll: open().reduce((n, x) => n + x.audioBytes, 0) }));
     if (!c) { res.statusCode = 409; return res.end('no connection'); }
     if (req.url === '/tok') c.sendTokens(JSON.parse(body).tokens);
     else if (req.url === '/end') c.end();
