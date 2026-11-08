@@ -3,8 +3,7 @@ import { TARGET_LANG, ITEMS_CAP, REFINE_MODEL } from '../config.js';
 import { saveSessions, addUsage, recordUsage } from '../store/index.js';
 import { getSession } from '../store/sessions.js';
 import { getRoom, broadcast, rooms, maybeGcRoom } from './rooms.js';
-import { polishText, translateText, confFixLLM, confFixTerms } from '../vendors/openai.js';
-import { CONFFIX, confFixReal, confFixTrigger, confFixMark } from '../util/pipeline_util.js';
+import { polishText, translateText } from '../vendors/openai.js';
 import { runSoniox } from '../pipelines/soniox.js';
 import { runDesk, runDeskGuestFeed } from '../pipelines/desk.js';
 import { runTranslate } from '../pipelines/translate.js';
@@ -150,7 +149,7 @@ export function handleHost(ws) {
     return rows.join('\n');
   };
   // 확정 카드 다듬기: 비동기 nano → 카드가 살아 있고 텍스트가 그대로일 때만 덮어쓰기
-  // (그 사이 confFix·늦은 번역 꼬리가 먼저 덮었으면 양보). 응대 종료로 deskLog 에
+  // (그 사이 늦은 번역 꼬리가 먼저 덮었으면 양보). 응대 종료로 deskLog 에
   // 아카이브된 뒤 도착하면 기록만 조용히 갱신(뷰어 방송 불필요).
   const polishCommit = (id, key, src, tgt) => {
     polishText(src, tgt, key, polishCtx(key, id)).then((out) => {
@@ -167,59 +166,8 @@ export function handleHost(ws) {
     }).catch(() => {});
   };
 
-  // 저신뢰 자동 교정(고급옵션 confFix): 트리거(연속 저신뢰) 발화만 GPT 재검토 → 명백한 오인식이면
-  // 같은 id 로 카드 덮어쓰기(원문+번역). runSoniox·runDesk(직원/여객) 커밋에서 호출.
-  // TTS 재발화는 하지 않는다(이미 재생된 음성을 되돌릴 수 없어 텍스트만 교정).
-  const maybeConfFix = (id, toks, txt, src, targetKey) => {
-    try {
-      if (!confFixTrigger(toks)) return;
-      const low = confFixReal(toks)
-        .filter(([, c]) => c < CONFFIX.LOW)
-        .map(([t, c]) => `${String(t).trim()}(${c})`)
-        .join(' ');
-      // 직전 대화 2~3턴(현재 발화 제외) — 대화 흐름으로 오인식 단어를 유추할 근거
-      const hist = (session && Array.isArray(session.items) ? session.items.slice(-4) : [])
-        .filter((x) => x.id !== id && x.source)
-        .slice(-3)
-        .map((x) => `${x.source} → ${(x.texts && (x.texts.ko || Object.values(x.texts)[0])) || ''}`.trim())
-        .join('\n');
-      confFixLLM({
-        srcLang: src,
-        marked: confFixMark(toks),
-        lowWords: low,
-        history: hist,
-        terms: confFixTerms(src),
-        desk: pipeline === 'desk',
-      }).then(async (r) => {
-        if (!r || !r.changed) return;
-        // 치환 적용 가드: 1글자·no-op·원문에 없는 치환은 폐기 — 프롬프트 실험에서 nano 가
-        // 정상 발화(어절 첫 음절 저신뢰)에 '가→가상' 류 무의미 1글자 치환을 내는 오탐이 재현됐고,
-        // 이 가드만으로 전부 걸러졌다(진짜 오인식은 '긴옌실→흡연실'처럼 2글자+ 덩어리로 나옴).
-        let corrected = txt;
-        let applied = 0;
-        for (const rep of r.replacements) {
-          const from = String((rep && rep.from) || '');
-          const to = String((rep && rep.to) || '');
-          if (from.trim().length < 2 || !to.trim() || to === from || !corrected.includes(from)) continue;
-          corrected = corrected.replace(from, to);
-          applied++;
-        }
-        if (!applied || corrected === txt) return;
-        // 응대 종료(deskLog 아카이브)·세션 정리로 카드가 사라졌으면 폐기 — 다음 손님 화면에 유령 카드 방지
-        if (!(session && Array.isArray(session.items) && session.items.some((x) => x.id === id))) return;
-        // 번역은 검증된 경로로 다시 생성(판정 모델의 번역은 언어 섞임 등 품질이 불안정했음)
-        const tr = await translateText(corrected, targetKey, true, [], REFINE_MODEL).catch(() => null);
-        if (!tr) return;
-        if (!(session && Array.isArray(session.items) && session.items.some((x) => x.id === id))) return; // 번역 대기 중 정리된 경우
-        console.log('[confFix] 교정:', JSON.stringify(txt), '→', JSON.stringify(corrected));
-        upsertItem(id, { [targetKey]: tr }, corrected);
-        toHost({ type: 'status', message: '저신뢰 구간 자동 교정 적용' });
-      }).catch(() => {});
-    } catch {}
-  };
-
   // 파이프라인 모듈에 넘기는 연결 컨텍스트 — 구 server.js 에선 run*() 이 handleHost 안의 중첩 함수로 이 값들을 클로저로 공유했다
-  const h = { ws, sessionId, session, pipeline, inLang, targetLang, idle, toHost, liveSend, upsertItem, polishCommit, maybeConfFix, bumpIdle };
+  const h = { ws, sessionId, session, pipeline, inLang, targetLang, idle, toHost, liveSend, upsertItem, polishCommit, bumpIdle };
   if (pipeline === 'translate') runTranslate(h);
   else if (pipeline === 'soniox') runSoniox(h);
   else if (pipeline === 'desk') runDesk(h);

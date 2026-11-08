@@ -11,6 +11,9 @@ export const ROOT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 
 // 엔진 접속 URL — 테스트에서 로컬 fake 엔진으로 오버라이드(실 엔진 호출은 항상 과금되므로)
 export const SONIOX_WS_URL = process.env.SONIOX_WS_URL || 'wss://stt-rt.soniox.com/transcribe-websocket';
 export const SONIOX_MODEL = 'stt-rt-v6'; // 실시간 번역·안내데스크·용어 실검증 공통 — stt-rt-v5 는 2026-12-15 제거
+// 에이전트 텍스트 입력(v6): 이 기기에서 재생하는 TTS 문장을 엔진에 알려 마이크로 다시 들어온 소리를 사용자 말로 적지 않게 한다.
+// 문제가 생기면 SONIOX_AGENT_TEXT=0 으로 끈다(다시 배포 없이 환경변수만).
+export const SONIOX_AGENT_TEXT = process.env.SONIOX_AGENT_TEXT !== '0';
 export const CARTESIA_TTS_WS_BASE = process.env.CARTESIA_TTS_WS_URL || 'wss://api.cartesia.ai/tts/websocket';
 
 export const PORT = Number(process.env.PORT || 3000);

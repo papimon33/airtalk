@@ -1,43 +1,12 @@
 /* 파이프라인 순수 로직 회귀 테스트 — pipeline_util.js (무과금·즉시 실행)
-   임계값 근거: PROJECT_NOTES 2026-07-14(5) confFix 확정안. 값 변경 시 이 테스트도 의도적으로 갱신할 것. */
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  kstDay, CONFFIX, confFixTrigger, confFixMark, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
+  kstDay, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
 } from '../server/util/pipeline_util.js';
+import { agentTextFeed } from '../server/util/agent_text.js';
 
-/* ── confFix 트리거: 연속 2+ 저신뢰(<0.4) 또는 극단 단발(≤0.12), 실단어 ≥3, 저신뢰 비율 ≤70% ── */
-
-test('confFixTrigger: 실단어 3개 미만이면 발동하지 않는다(인사·응답어 가드)', () => {
-  assert.equal(confFixTrigger([['안녕', 0.1], ['하세요', 0.1]]), false);
-  assert.equal(confFixTrigger([]), false);
-  assert.equal(confFixTrigger(null), false);
-});
-
-test('confFixTrigger: 연속 2개 저신뢰(<0.4)면 발동한다', () => {
-  assert.equal(confFixTrigger([['오늘', 0.9], ['가상', 0.35], ['공간', 0.38], ['입니다', 0.8]]), true);
-});
-
-test('confFixTrigger: 단발 저신뢰는 무시하되 극단값(≤0.12)이면 발동한다', () => {
-  // 단발 0.2 — 어절 첫 음절·조사 등 구조적 저신뢰로 흔함 → 발동 X
-  assert.equal(confFixTrigger([['오늘', 0.9], ['날씨', 0.2], ['좋네요', 0.95]]), false);
-  // 단발이라도 0.12 이하 극단값 → 발동
-  assert.equal(confFixTrigger([['오늘', 0.9], ['남씨', 0.1], ['좋네요', 0.95]]), true);
-});
-
-test('confFixTrigger: 저신뢰 비율 70% 초과(횡설수설·소음)면 발동하지 않는다', () => {
-  assert.equal(confFixTrigger([['아', 0.2], ['어', 0.2], ['그', 0.2], ['음', 0.2]]), false);
-});
-
-test('confFixTrigger: 문장부호·confidence 없는 토큰은 실단어로 세지 않는다', () => {
-  assert.equal(confFixTrigger([['.', 0.1], [',', 0.1], ['!', 0.1], ['오늘', 0.9], ['좋네요', 0.9]]), false);
-});
-
-test('confFixMark: 저신뢰(<0.55) 실단어만 «»로 마킹한다', () => {
-  assert.equal(confFixMark([['오늘 ', 0.9], ['가상', 0.3], ['. ', 0.1], ['공간', 0.7]]), '오늘 «가상». 공간');
-});
-
-/* ── 단독 응답어(dropAcks) 판정 ── */
 test('isAckOnly: 단독 응답어만 참(문장은 거짓)', () => {
   assert.equal(isAckOnly('네.'), true);
   assert.equal(isAckOnly('Yes'), true);
@@ -139,3 +108,47 @@ test('langScriptOk: 다듬기가 원문 언어(한국어)로 돌아가거나 중
   assert.equal(langScriptOk('The 김포 terminal', 'The 김포 terminal opens', 'en'), true, '기계 번역에도 있던 한글은 허용');
 });
 
+test('agentTextFeed: TTS 글자를 재생 0.7초 전에 맞춰 보내고, 문장 끝에 end_of_segment', () => {
+  let t = 1000;
+  const sent = [];
+  const f = agentTextFeed((m) => sent.push(m), { now: () => t, tickMs: 1e9, netMs: 100, leadMs: 700, msPerChar: 100 });
+  const s = f.begin('가나다라마바사아자차'); // 10자
+  assert.equal(sent.length, 0, '오디오가 나가기 전에는 보내지 않는다');
+  f.audio(s, 48 * 2000); // 2초 분량 — 재생은 1100ms 에 시작
+  // 1000 + 700 = 1700 까지 재생될 글자: 시작 1100, 글자당 200ms(합성 중엔 max(2000, 1000)) → 0·1·2번째(1100·1300·1500), 3번째는 1700
+  assert.deepEqual(sent.map((m) => m.text), ['가나다라']);
+  t = 1800; f.tick(); // 2500 까지: 1100·1300·…·2500 → 8자
+  assert.equal(sent.map((m) => m.text).join(''), '가나다라마바사아');
+  assert.ok(!sent.some((m) => m.end_of_segment), '합성이 끝나기 전에는 문장을 닫지 않는다');
+  f.end(s); t = 4000; f.tick();
+  assert.equal(sent.map((m) => m.text).join(''), '가나다라마바사아자차');
+  assert.equal(sent[sent.length - 1].end_of_segment, true);
+  assert.equal(f.pending(), 0);
+});
+
+test('agentTextFeed: 다음 문장은 앞 문장 재생이 끝난 뒤로 잡는다', () => {
+  let t = 0;
+  const sent = [];
+  const f = agentTextFeed((m) => sent.push(m), { now: () => t, tickMs: 1e9, netMs: 0, leadMs: 500 });
+  const a = f.begin('하나'); f.audio(a, 48 * 3000); f.end(a); // 0~3000 재생
+  const b = f.begin('둘'); f.audio(b, 48 * 1000); f.end(b);   // 3000~4000 재생
+  t = 1000; f.tick();
+  assert.ok(!sent.some((m) => m.text.includes('둘')), '앞 문장 재생 중에는 다음 문장을 보내지 않는다');
+  t = 2600; f.tick();
+  assert.ok(sent.some((m) => m.text.includes('둘')), '재생 0.5초 전에는 보낸다');
+  assert.equal(sent.filter((m) => m.end_of_segment).length, 2);
+});
+
+test('agentTextFeed: 재생을 끄면 보내던 문장을 끊었다고 알리고 나머지는 버린다', () => {
+  let t = 0;
+  const sent = [];
+  const f = agentTextFeed((m) => sent.push(m), { now: () => t, tickMs: 1e9, netMs: 0, leadMs: 0 });
+  const a = f.begin('가나다라'); f.audio(a, 48 * 4000);
+  t = 1500; f.tick();
+  f.begin('다음 문장');
+  f.cancel();
+  assert.deepEqual(sent[sent.length - 1], { type: 'agent_text', text: '', end_of_segment: true });
+  t = 9000; f.tick();
+  assert.ok(!sent.some((m) => m.text.includes('다음')));
+  assert.equal(f.pending(), 0);
+});

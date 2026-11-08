@@ -59,7 +59,7 @@ export function migrateSessions() {
    건수 상한과 별개로 **바이트 상한**을 함께 둔다: 데스크 세션은 deskLog 를 품은 문서 1개라
    Mongo 문서 한도(16MB)를 넘기면 replaceOne 이 통째로 실패한다 — 오래된 응대 몇 건이 잘리는 것과 달리
    그 데스크의 저장이 전부 멈춰 새 응대까지 사라진다. 잘림보다 훨씬 나쁜 실패라 먼저 막는다.
-   item.toks(단어별 신뢰도)는 지우지 않는다 — tools/eval/conf-analyze.mjs 가 이걸 읽어 confFix 임계값 근거를
+   item.toks(단어별 신뢰도)는 지우지 않는다 — 인식 품질 평가에 쓰려고 남겨 두며, 예전에 저신뢰 교정 임계값 근거를
    뽑고, 공항 실소음·실억양의 신뢰도 분포는 시범 기간에만 얻을 수 있는 데이터다. */
 const DESKLOG_MAX_BYTES = 8 * 1024 * 1024;
 export function capDeskLog(session) {

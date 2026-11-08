@@ -93,7 +93,8 @@ export function registerSessionRoutes(app) {
       pipeline: s.pipeline || 'whisper', preset: s.preset || null, src: s.src || null, // src: 호스트 화면 재진입 시 소리 입력 복원(목록에서 열 때 이 값이 쓰인다)
       langs: s.langs || [], outLang: s.outLang, inLang: s.inLang,
       sxInfo: s.sxInfo || null, speakers: s.speakers || {},
-      tts: hasPerm(findUser(s.owner), 'tts'), // 세션 주인에게 TTS 권한이 있어야 QR 뷰어에 듣기 버튼
+      tts: hasPerm(findUser(s.owner), 'tts') && s.viewerTts !== false, // 세션 주인에게 TTS 권한이 있고 '뷰어에서 재생 지원'이 켜져 있어야 QR 뷰어에 듣기 버튼
+      viewerTts: s.viewerTts !== false,
       items: s.items || [],
     });
   });
@@ -122,6 +123,11 @@ export function registerSessionRoutes(app) {
     const b = req.body || {};
     if (typeof b.title === 'string') s.title = b.title;
     if (typeof b.inLang === 'string') s.inLang = b.inLang;
+    // 뷰어(QR) 음성 듣기 허용 — 끄면 뷰어의 듣기 버튼이 사라지고 서버도 뷰어용 음성을 만들지 않는다
+    if (typeof b.viewerTts === 'boolean' && s.pipeline === 'soniox') {
+      s.viewerTts = b.viewerTts;
+      broadcast(req.params.id, { type: 'tts-avail', on: b.viewerTts && hasPerm(findUser(s.owner), 'tts') });
+    }
     // 모드(preset) 변경: 번역 이력이 없고 '녹음 중이 아닌' soniox 세션만 허용(진행 중 방향/설정 desync 방지)
     const activeHosts = rooms.get(req.params.id)?.hosts.size || 0;
     if (typeof b.preset === 'string' && s.pipeline === 'soniox' && activeHosts === 0 && (!Array.isArray(s.items) || s.items.length === 0)) {

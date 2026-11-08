@@ -2,12 +2,14 @@
    시나리오(json) → 줄별 Cartesia 음성(화자 언어별 목소리, 캐시) → 로컬 서버(격리 DATA_DIR, 운영 DB 안 씀)에
    앱 양방향 통역과 같은 방식(마이크 1개 = 두 사람 음성이 한 채널)으로 실시간 속도로 흘려 넣기
    → 줄별 [화자 / 시나리오 원문 / 인식 원문 / 판정된 언어 / 번역(상대 언어)] 보고서(md·json).
-   사용: node tools/eval/dialogue-e2e.mjs <scenario.json> [--name 이름] [--lines 1,6-7] [--terms 용어.json] [--max-delay ms] [--sens -1~1] [--dry(줄·글자 수만 확인)]
+   사용: node tools/eval/dialogue-e2e.mjs <scenario.json> [--name 이름] [--lines 1,6-7] [--terms 용어.json] [--max-delay ms] [--sens -1~1] [--echo dB] [--no-agent] [--dry(줄·글자 수만 확인)]
      · 시나리오: { a: 'ko', b: 'ja', lines: [{ speaker: 'ko'|'ja', text }] } (배열만 있어도 됨 — 언어는 줄에서 뽑는다)
      · --lines: 그 줄만 재생(번호는 시나리오 그대로). --terms: 용어 설정 entries 배열([{ category, names:{ko,ja,…}, mode }])을
        테스트 서버 용어집(기본 시드)에 더한 뒤 시작 — 운영 용어집에 넣기 전에 효과 확인용
    출력: tools/eval/out/<이름>.md·.json·.server.log (git 무시). 음성 캐시: tools/eval/tts-audio/speech/
    템플릿: speech-e2e.mjs(단방향 발표). 다른 점 — 세션 twoway·auto, 언어 판정·화자별 집계, 다듬기 전 번역도 기록.
+     · --echo dB: 이 기기 TTS 를 켜고, 서버가 보낸 TTS 음성을 그만큼 줄여 마이크 입력에 섞는다(스피커 소리가 새는 상황).
+       --no-agent: 에이전트 텍스트 입력을 끄고 비교(SONIOX_AGENT_TEXT=0). 보고서에 'TTS 가 사람 말로 잡힌 카드' 수가 나온다.
    ⚠ 과금: Cartesia(처음 합성만, 이후 캐시)·Soniox(실시간 인식·번역)·OpenAI(다듬기). */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,6 +32,9 @@ const GAP_S = 1.2;
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
+const ECHO_DB = args.includes('--echo') ? Number(args[args.indexOf('--echo') + 1]) : null;
+const ECHO = ECHO_DB == null ? 0 : 10 ** (-ECHO_DB / 20); // 새는 TTS 소리 크기(배율)
+const NO_AGENT = args.includes('--no-agent');
 const file = args.find((a) => !a.startsWith('--') && !args[args.indexOf(a) - 1]?.startsWith('--'));
 if (!file) { console.error('사용: node tools/eval/dialogue-e2e.mjs <scenario.json> [--name 이름]'); process.exit(1); }
 const NAME = opt('name', path.basename(file).replace(/\.[^.]+$/, ''));
@@ -79,14 +84,23 @@ async function run(base, cookie) {
     body: JSON.stringify({ title: NAME, pipeline: 'soniox', preset: 'twoway', src: 'mic', inLang: 'auto' }) }).then((r) => r.json());
   if (!sess.id) throw new Error('세션 생성 실패: ' + JSON.stringify(sess));
   // 앱 양방향 통역(마이크 1개)과 같은 쿼리
-  const q = `session=${sess.id}&src=mic&out=${A}&in=auto&pipeline=soniox&audioOut=0&sxSens=${opt('sens', 0)}&sxMaxDelay=${opt('max-delay', 2000)}&sxLatency=0&sxMode=two&sxTarget=en&sxA=${A}&sxB=${B}`;
+  const q = `session=${sess.id}&src=mic&out=${A}&in=auto&pipeline=soniox&audioOut=${ECHO ? '1&tts=1&gender=f' : '0'}&sxSens=${opt('sens', 0)}&sxMaxDelay=${opt('max-delay', 2000)}&sxLatency=0&sxMode=two&sxTarget=en&sxA=${A}&sxB=${B}`;
   const ws = new WebSocket(`${base.replace('http', 'ws')}/ws/host?${q}`, { headers: { Cookie: cookie } });
   const sent = new Map(); // id -> { id, firstAt, source, lang, texts, rawTexts(확정 직후 = 다듬기 전), final, removed }
   const statuses = [];
   let lastMsg = Date.now(), ready = false;
+  // --echo: 서버가 이 기기로 보낸 TTS 음성을 '재생'했다고 보고(받은 순서대로 이어서, 0.15초 뒤) 마이크 입력에 섞는다
+  const echo = []; let echoEnd = 0, sentSamples = 0;
   ws.on('message', (d) => {
     let m; try { m = JSON.parse(d.toString()); } catch { return; }
     lastMsg = Date.now();
+    if (m.type === 'audio' && ECHO && m.b64) {
+      const b = Buffer.from(m.b64, 'base64');
+      const pcm = new Int16Array(b.buffer, b.byteOffset, b.length >> 1);
+      const start = Math.max(sentSamples + Math.round(0.15 * RATE), echoEnd);
+      echo.push({ start, pcm }); echoEnd = start + pcm.length;
+      return;
+    }
     if (m.type === 'status') { statuses.push(m.message); if (/엔진 연결됨/.test(m.message)) ready = true; }
     if (m.type !== 'sentence') return;
     const s = sent.get(m.id) || { id: m.id, firstAt: Date.now() };
@@ -104,10 +118,24 @@ async function run(base, cookie) {
   const CH = RATE / 10; // 100ms
   const t0 = Date.now();
   let samples = 0, lastAct = 0;
+  const withEcho = (chunk, at) => {
+    if (!echo.length) return chunk;
+    const n = chunk.length >> 1, out = Buffer.from(chunk);
+    for (const e of echo) {
+      const a = Math.max(at, e.start), z = Math.min(at + n, e.start + e.pcm.length);
+      for (let i = a; i < z; i++) {
+        const v = out.readInt16LE((i - at) * 2) + e.pcm[i - e.start] * ECHO;
+        out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(v))), (i - at) * 2);
+      }
+    }
+    while (echo.length && echo[0].start + echo[0].pcm.length <= at) echo.shift();
+    return out;
+  };
   const sendPcm = async (buf) => {
     for (let off = 0; off < buf.length; off += CH * 2) {
-      ws.send(buf.subarray(off, Math.min(buf.length, off + CH * 2)));
+      ws.send(withEcho(buf.subarray(off, Math.min(buf.length, off + CH * 2)), samples));
       samples += Math.min(CH, (buf.length - off) / 2);
+      sentSamples = samples;
       if (Date.now() - lastAct > 4000) { lastAct = Date.now(); ws.send(JSON.stringify({ type: 'activity' })); }
       const ahead = t0 + (samples / RATE) * 1000 - Date.now();
       if (ahead > 0) await sleep(ahead);
@@ -134,7 +162,15 @@ async function run(base, cookie) {
     s.lag = +((s.firstAt - owner.startAt) / 1000).toFixed(1);
     (owner.out = owner.out || []).push(s);
   }
-  return { session: sess.id, statuses, sentences: list.length, removed: [...sent.values()].filter((s) => s.removed).length };
+  // TTS 가 사람 말로 잡힌 카드: 원문이 다른 카드의 번역(=읽어 준 TTS 문장)과 거의 같은 카드(잠깐 보였다 지워진 것 포함)
+  const bigr = (x) => { const n = String(x || '').replace(/[\s\p{P}\p{S}]/gu, ''); const r = new Set(); for (let i = 0; i < n.length - 1; i++) r.add(n.slice(i, i + 2)); return r; };
+  const ttsSets = [...sent.values()].filter((s) => s.final && !s.removed).flatMap((s) => Object.entries(s.texts || {}).filter(([k]) => k !== s.lang).map(([, v]) => bigr(v)));
+  const echoCards = [...sent.values()].filter((s) => {
+    const b = bigr(s.source); if (b.size < 3) return false;
+    return ttsSets.some((t) => { let hit = 0; for (const x of b) if (t.has(x)) hit++; return hit / b.size >= 0.6; });
+  });
+  return { session: sess.id, statuses, sentences: list.length, removed: [...sent.values()].filter((s) => s.removed).length,
+    echoShown: echoCards.length, echoKept: echoCards.filter((s) => s.final && !s.removed).length };
 }
 
 /* ---- 비교용: 공백·문장부호 뺀 글자 기준 편집 거리 비율 ---- */
@@ -157,7 +193,7 @@ for (const l of lines) { const r = await tts(l.text, l.speaker); l.pcm = r.pcm; 
 const totalSec = lines.reduce((a, l) => a + l.sec + GAP_S, 0);
 console.log(`음성 ${(totalSec / 60).toFixed(1)}분(말 사이 무음 포함, 새로 합성 ${fresh}자) — 실시간 재생 시작`);
 
-const srv = await bootServer({ SONIOX_API_KEY: env.SONIOX_API_KEY, OPENAI_API_KEY: env.OPENAI_API_KEY, CARTESIA_API_KEY: '' });
+const srv = await bootServer({ SONIOX_API_KEY: env.SONIOX_API_KEY, OPENAI_API_KEY: env.OPENAI_API_KEY, CARTESIA_API_KEY: ECHO ? env.CARTESIA_API_KEY : '', ...(NO_AGENT ? { SONIOX_AGENT_TEXT: '0' } : {}) });
 let res;
 try {
   const cookie = await loginAdmin(srv.base);
@@ -211,6 +247,7 @@ const lags = rows.filter((r) => r.sentences.length).map((r) => r.sentences[0].la
 const allS = rows.flatMap((r) => r.sentences.map((s) => ({ ...s, speaker: r.speaker })));
 const wrongLang = allS.filter((s) => s.lang !== s.speaker);
 const summary = {
+  echoDb: ECHO_DB, agentText: ECHO ? !NO_AGENT : null, echoShown: res.echoShown, echoKept: res.echoKept,
   pair: `${A}⇄${B}`, audioMin: +(totalSec / 60).toFixed(1), lines: lines.length, chars, sentences: allS.length,
   cer: Object.fromEntries(langs.map((g) => [g, +avgCer(by(g)).toFixed(3)])),
   wrongLang: wrongLang.length, missingLines: rows.filter((r) => !r.sentences.length && !r.mergedInto).map((r) => r.i),
@@ -226,6 +263,7 @@ let md = `# ${scen.title || NAME}\n\n`;
 md += `- 양방향 통역 ${LANG_NAME[A] || A} ⇄ ${LANG_NAME[B] || B} (soniox two_way, 마이크 1개·모노, 입력 언어 자동), 음성 ${summary.audioMin}분, ${lines.length}줄, 확정 문장 ${allS.length}개\n`;
 md += `- 인식 글자 오류율(공백·문장부호 제외): ${langs.map((g) => `${LANG_NAME[g] || g} ${(summary.cer[g] * 100).toFixed(1)}%`).join(' · ')}\n`;
 md += `- 언어 판정 틀림: ${wrongLang.length}문장${wrongLang.length ? ` (${rows.filter((r) => !r.langOk && r.sentences.length).map((r) => r.i + '번').join(', ')})` : ''} · 인식 안 된 줄: ${summary.missingLines.length ? summary.missingLines.join(', ') + '번' : '없음'} · 한 문장으로 합쳐진 줄: ${summary.mergedLines.length ? summary.mergedLines.join(', ') : '없음'} · 다듬기로 바뀐 문장: ${summary.polished}개\n`;
+if (ECHO) md += `- 스피커 소리 섞음 -${ECHO_DB}dB, 에이전트 텍스트 ${NO_AGENT ? '끔' : '켬'}: TTS 가 사람 말로 잡힌 카드 ${res.echoShown}개(그중 남은 카드 ${res.echoKept}개)\n`;
 md += `- 말 시작 → 화면에 첫 글자: 줄별 중앙값 ${summary.firstTextLagMedianS}초\n`;
 if (pick) md += `- 재생한 줄: ${opt('lines')}번만\n`;
 if (TERMS) md += `- 테스트 용어 ${TERMS.length}개 추가(기본 시드 + \`${path.relative(ROOT, path.resolve(opt('terms')))}\`): ${TERMS.map((t) => `${t.names.ko}⇄${t.names.ja || t.names.en || ''}`).join(', ')}\n`;

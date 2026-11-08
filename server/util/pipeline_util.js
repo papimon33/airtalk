@@ -5,34 +5,6 @@
 /* ── KST 일자 버킷 ── */
 export const kstDay = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
 
-/* ── 저신뢰 자동 교정(confFix) 트리거 — 임계 근거는 PROJECT_NOTES 2026-07-14(5) ── */
-export const CONFFIX = {
-  REAL_MIN: 3, // 가드: 실단어(문자·숫자 포함 토큰) 최소 개수 — 인사·응답어 등 짧은 발화 제외
-  RUN_CONF: 0.4, // 연속 저신뢰 판정 임계
-  RUN_LEN: 2, // 이 개수 이상 '연속'되면 발동(단발 저신뢰는 구조적 편향이라 무시)
-  EXTREME: 0.12, // 단발이라도 이 이하면 발동(극단값 — 3세션 기준 정상 최소값 0.05 존재하므로 GPT 거름망 필수)
-  LOW: 0.55, // '저신뢰 단어' 마킹·비율 계산 임계(UI 하이라이트 0.6과 별도)
-  NOISE_RATIO: 0.7, // 저신뢰 실단어 비율이 이걸 넘으면 발동 안 함(횡설수설/소음 — 교정 시 GPT 가 지어냄)
-};
-export const confFixReal = (toks) => (toks || []).filter(([t, c]) => typeof c === 'number' && /[\p{L}\p{N}]/u.test(String(t || '').trim()));
-export function confFixTrigger(toks) {
-  const real = confFixReal(toks);
-  if (real.length < CONFFIX.REAL_MIN) return false;
-  const lowN = real.filter(([, c]) => c < CONFFIX.LOW).length;
-  if (lowN / real.length > CONFFIX.NOISE_RATIO) return false; // 상한 가드
-  let run = 0;
-  let minC = 1;
-  for (const [, c] of real) {
-    if (c < CONFFIX.RUN_CONF) { run++; if (run >= CONFFIX.RUN_LEN) return true; } else run = 0;
-    if (c < minC) minC = c;
-  }
-  return minC <= CONFFIX.EXTREME;
-}
-// 저신뢰 구간을 «»로 마킹한 원문(토큰 원본 이어붙임 — 표시용 source 와 미세하게 다를 수 있음)
-export const confFixMark = (toks) => (toks || [])
-  .map(([t, c]) => (typeof c === 'number' && c < CONFFIX.LOW && /[\p{L}\p{N}]/u.test(String(t || '').trim()) ? `«${t}»` : t))
-  .join('');
-
 /* ── 간투사(음/어/uh)·단독 응답어 필터 ── */
 const FILLER_NOISE_RE = /\b(?:u+m+|u+h+|uh+m+|hm+|mm+|mhm|e+r+m*|o+h+|a+h+|h+u+h+)\b|(?<![가-힣])(?:음+|어+|아+|으+음*|앗|핫|헉|흠+)(?![가-힣])|(?:え[ーっ]?と|えー+|あー+|うー+|んー+)|(?:嗯+|呃+|唔+)/gi;
 // 소프트 간투사: 영어 yeah/yep/yup/y'know (발화 전체면 보존). 'well'은 실단어 의미가 있어 제외.

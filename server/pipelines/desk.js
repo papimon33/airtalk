@@ -63,7 +63,7 @@ export function runDeskGuestFeed(ws) {
    · 무음 deskIdleMs(기본 30초) → 대화 종료: items 를 deskLog 에 보존, soniox 종료 → 대기(idle) 복귀.
    · TTS/화자분리 없음. 클라(호스트=ko / 뷰어=X)는 source+texts+meta(sxInfo)로 색/표시 결정. */
 export function runDesk(h) {
-  const { ws, sessionId, session, toHost, liveSend, upsertItem, polishCommit, maybeConfFix } = h;
+  const { ws, sessionId, session, toHost, liveSend, upsertItem, polishCommit } = h;
   if (!SONIOX_API_KEY) { toHost({ type: 'status', message: 'SONIOX_API_KEY 미설정 — 데스크 모드 사용 불가' }); return; }
   const sens = Number(ws._sxSens), maxDelay = Number(ws._sxMaxDelay), latency = Number(ws._sxLatency);
   const A = 'ko'; // 안내원 언어(고정)
@@ -216,8 +216,6 @@ export function runDesk(h) {
   let carrying = false, carryTimer = null; // <end> 에 끊긴 짧은 첫마디: 말이 이어지면 합치고, 없으면 잠시 뒤 확정
   const stopCarry = () => { carrying = false; if (carryTimer) { clearTimeout(carryTimer); carryTimer = null; } };
   let srcToks = []; // 원문 확정 토큰 [[text, confidence], ...] — 저신뢰 하이라이트 + 추후 평가용
-  let dropAcks = ws._dropAcks === '1'; // 고급옵션: 단독 응답어 기록 생략(라이브 토글 가능)
-  let confFix = ws._confFix === '1'; // 고급옵션: 저신뢰 자동 교정(라이브 토글 가능)
   const targetKeyFor = (src) => (lockedB && lockedB !== A ? (src === A ? lockedB : A) : A);
   const resetUtterance = () => { curId = null; finalText = ''; finalTrans = ''; lastTrans = ''; curSrc = ''; langVotes.reset(); srcToks = []; flipStarted = false; stopCarry(); };
   const startHeldCard = () => {
@@ -277,7 +275,6 @@ export function runDesk(h) {
     if (guestMicOn && crossDupHit('staff', txt, tgt) && louder !== true) { chStats.crossDrops++; liveSend(id, {}, null, null); return; }
     crossDupNote('staff', txt, tgt);
     // 고급옵션: 단독 응답어(네/Yes 단독 발화) 기록 생략
-    if (dropAcks && isAckOnly(txt)) { liveSend(id, {}, null, null); return; }
     chStats.staff++;
     const out = tgt || txt;
     if (out && out === lastCommitText && Date.now() - lastCommitAt < 5000) return;
@@ -285,7 +282,6 @@ export function runDesk(h) {
     lastCommitAt = Date.now();
     upsertItem(id, { [targetKeyFor(src)]: out }, txt, null, src || null, undefined, toks, tm);
     if (tgt) polishCommit(id, targetKeyFor(src), txt, tgt); // 번역 다듬기(nano) — 직역투 후교정
-    if (confFix) maybeConfFix(id, toks, txt, src, targetKeyFor(src)); // 저신뢰 자동 교정(고급옵션)
   };
 
   // 앞 카드와 잡아 둔 다음 사람의 말까지 모두 확정
@@ -572,7 +568,6 @@ export function runDesk(h) {
     if (crossDupHit('guest', txt, tgt) && gLouder !== true) { chStats.crossDrops++; liveSend(id, {}, null, null, null, 'left'); return; }
     crossDupNote('guest', txt, tgt);
     // 고급옵션: 단독 응답어 기록 생략
-    if (dropAcks && isAckOnly(txt)) { liveSend(id, {}, null, null, null, 'left'); return; }
     chStats.guest++;
     const out = tgt || txt;
     if (out && out === gLastCommitText && Date.now() - gLastCommitAt < 5000) return;
@@ -580,7 +575,6 @@ export function runDesk(h) {
     gLastCommitAt = Date.now();
     upsertItem(id, { [A]: out }, txt, null, lockedB || null, 'left', toks, tm);
     if (tgt) polishCommit(id, A, txt, tgt); // 번역 다듬기(nano) — 손님 발화의 한국어 직역투 후교정
-    if (confFix) maybeConfFix(id, toks, txt, gSrc, A); // 저신뢰 자동 교정(고급옵션) — 여객 채널
   };
   function onGuestMsg(raw) {
     let ev; try { ev = JSON.parse(raw.toString()); } catch { return; }
@@ -674,8 +668,6 @@ export function runDesk(h) {
         const v = Number(m.value);
         if (Number.isFinite(v)) { guestSens = Math.min(100, Math.max(0, v)); sendGuestSens(); }
       }
-      else if (m.type === 'dropAcks') { dropAcks = !!m.on; } // 고급옵션: 단독 응답어 생략 라이브 토글
-      else if (m.type === 'confFix') { confFix = !!m.on; } // 고급옵션: 저신뢰 자동 교정 라이브 토글
       else if (m.type === 'desk-idle') { // 무음 자동 종료 시간 변경 — 데스크는 상시 캡처라 세션 중 변경을 허용
         const v = Number(m.value);
         if (Number.isFinite(v)) {

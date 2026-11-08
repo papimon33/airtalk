@@ -1,4 +1,4 @@
-/* OpenAI(chat completions) — 저신뢰 자동 교정(confFix) 판정·번역 다듬기(polish)·번역·띄어쓰기 교정 */
+/* OpenAI(chat completions) — 번역 다듬기(polish)·번역·띄어쓰기 교정 */
 import { OPENAI_API_KEY, REFINE_MODEL, LANG_NAMES } from '../config.js';
 import { termsConfig } from '../store/index.js';
 import { isAckOnly, sanitizeTranslation, langScriptOk, polishLengthOk } from '../util/pipeline_util.js';
@@ -8,88 +8,6 @@ import { isAckOnly, sanitizeTranslation, langScriptOk, polishLengthOk } from '..
 /*   - 머리말("…다음과 같습니다"), 불릿(-), 화살표(원문 → 번역),         */
 /*     "참고:/제안:/주의:/Note:" 줄, 끝의 메타 괄호주석 등.              */
 /* ------------------------------------------------------------------ */
-/* ---- 저신뢰 자동 교정(confFix, 고급옵션) ----
-   soniox 원문 토큰의 confidence 로 '오인식 의심 발화'만 골라 GPT(REFINE_MODEL)가 대화 맥락·용어를
-   보고 원문을 교정 → 재번역해 카드를 덮어쓴다(같은 id upsert). TTS 는 이미 재생됐을 수 있어 텍스트만 교정.
-
-   ⚠ 임계 선택 근거(재튜닝 시 필독 — 상세는 PROJECT_NOTES '2026-07-14 (5)', 재분석은 tools/eval/conf-analyze.mjs):
-   실로그 3세션(테스트 81발화·Le train 68·Bonjour 50, 실단어 토큰 ~4,700)으로 규칙별 발동률을 시뮬레이션한 결과 —
-   · '단발 최소 conf ≤ 0.35' 는 세션별 15%/24%/58% 로 편차 극심 → 폐기.
-     원인: soniox 는 ①한국어 어절 첫 음절 ②조사·구두점 ③언어 전환 경계(한↔영 코드스위칭)에
-     '정상 인식인데도' 낮은 conf 를 주는 구조적 편향이 있다(안0.13/여0.05/당0.05 전부 정상이었음).
-   · 진짜 오인식(찝찝대는/측측대는/逆 등)은 음절이 줄줄이 틀려 저신뢰가 '연속'된다 →
-     '연속 2개 이상 conf<0.4' 규칙은 3세션에서 0%/0%/8% 로 안정 발동(이 규칙 채택 = 규칙 C).
-   · 연속 규칙도 오탐 가능(담당인력 0.11/0.09 연속인데 정상) → GPT 의 changed=false 가 최종 거름망.
-   · 표본이 전부 한국어 지배 발화라, 데스크 외국어 손님 발화가 쌓이면 tools/eval/conf-analyze.mjs 로 재측정할 것. */
-// 활성 용어를 프롬프트용으로: 외국어 원문이면 '표기=한국어' 쌍, 한국어 원문이면 표기 목록(상위 30개)
-export function confFixTerms(srcLang) {
-  try {
-    const out = [];
-    for (const e of (termsConfig && termsConfig.entries) || []) {
-      const ko = e.names && e.names.ko;
-      if (!ko) continue;
-      if (srcLang && srcLang !== 'ko') {
-        const v = e.names[srcLang];
-        if (v && v !== ko) out.push(`${v}=${ko}`);
-      } else out.push(ko);
-      if (out.length >= 30) break;
-    }
-    return out.join(', ');
-  } catch { return ''; }
-}
-/* GPT 판정: 저신뢰 구간이 오인식인지 '치환 목록'만 제안받는다(문장 재작성 금지 — 프롬프트 실험에서
-   nano 가 문장을 다시 쓰게 하면 마킹 밖 글자를 훼손하거나 직전 대화를 번역하는 오류가 재현됐음).
-   치환 적용·가드는 서버(maybeConfFix)가 수행하고, 번역은 검증된 translateText 경로로 다시 뽑는다. */
-export async function confFixLLM({ srcLang, marked, lowWords, history, terms, desk }) {
-  if (!OPENAI_API_KEY) return null;
-  const srcName = LANG_NAMES[srcLang] || srcLang || '원문 언어';
-  const sys = `너는 공항 실시간 음성인식(STT) 교정기다. STT 가 «...»로 표시한 구간을 낮은 신뢰도로 인식했다. 표시 구간이 오인식인지 판단하라.
-
-판단 기준:
-- 표시 구간을 포함한 단어가 실제로 없는 말이거나 문맥에 안 맞고, '관련 용어'나 맥락상 자연스러운 단어와 발음이 비슷하면 → 오인식이므로 교체를 제안한다(changed=true).
-- 원문 그대로도 문장이 자연스럽고 뜻이 통하면 → 절대 고치지 않는다(changed=false, replacements=[]). 저신뢰 표시는 정상 단어에도 흔히 붙는다.
-- 무엇으로 고칠지 확신이 없으면 지어내지 말고 changed=false. 발화가 소음/무의미해도 changed=false.
-
-교체 형식: replacements 는 [{"from":"원문에 실제로 있는 연속 문자열","to":"교체할 문자열"}] 목록이다.
-from 은 표시 구간을 포함한 '2글자 이상'의 최소 덩어리만 담는다(1글자 교체 금지). 문장 전체를 다시 쓰지 마라.
-
-예시1(교정): 관련 용어에 '喫煙室=흡연실', 직전 대화가 흡연 얘기, 현재 발화 "«긴»«옌»실이 어디예요?"
-→ '긴옌실'은 없는 말이고 '흡연실'과 발음이 비슷: {"changed":true,"replacements":[{"from":"긴옌실","to":"흡연실"}]}
-예시2(정상): "« 가»상«공»간을 통한 시뮬레이션" — '가상공간'은 자연스러운 단어
-→ {"changed":false,"replacements":[]}
-
-원문 언어는 ${srcName}다. 번역은 하지 마라.
-출력은 JSON 하나만: {"changed":true|false,"replacements":[{"from":"...","to":"..."}]}`;
-  const user = [
-    desk ? '상황: 공항 안내데스크 응대(김포국제공항 — 시설 안내·항공편·교통 문의가 대부분)' : '상황: 실시간 통역 세션',
-    terms ? `관련 용어: ${terms}` : '',
-    history ? `직전 대화:\n${history}` : '',
-    `현재 발화(«»=저신뢰 구간): ${marked}`,
-    `저신뢰 단어(신뢰도): ${lowWords}`,
-  ].filter(Boolean).join('\n');
-  const body = {
-    model: REFINE_MODEL,
-    messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-    max_completion_tokens: 400,
-    response_format: { type: 'json_object' },
-  };
-  const re = reasoningEffort(REFINE_MODEL);
-  if (re) body.reasoning_effort = re;
-  try {
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8000), // 실시간 파이프 — 늦은 판정은 포기
-    });
-    if (!r.ok) { console.error('[confFix] HTTP', r.status); return null; }
-    const data = await r.json();
-    const j = JSON.parse(data?.choices?.[0]?.message?.content || 'null');
-    if (!j || typeof j.changed !== 'boolean') return null;
-    return { changed: j.changed, replacements: Array.isArray(j.replacements) ? j.replacements : [] };
-  } catch (e) { console.error('[confFix] error', e.message); return null; }
-}
-
 /* ------------------------------------------------------------------ */
 /*  전사된 원문 -> 목표 언어로 번역(+다듬기) : gpt-5-mini                */
 /* ------------------------------------------------------------------ */
@@ -103,7 +21,7 @@ export function reasoningEffort(model) {
 }
 
 /* ---- 번역 다듬기(nano): Soniox 기계 번역의 직역투를 자연스러운 구어체로 후교정 ----
-   카드 확정(기계 번역 즉시 표시) → 비동기 nano → 같은 id 카드 덮어쓰기(confFix 와 동일 패턴).
+   카드 확정(기계 번역 즉시 표시) → 비동기 nano → 같은 id 카드 덮어쓰기.
    폴란드 시연 후속: "유럽 내 도입 사례에서요" → "유럽 쪽 구축 사례를 보면요" 류의 어색한 직역 교정.
    실패·무변경이면 null(원문 유지). TTS 는 이미 재생된 뒤라 자막/기록만 다듬어진다(의도).
    context(직전 대화)가 핵심 — "처음부터요" 같은 단답은 맥락 없이 자연화가 불가능하다. */

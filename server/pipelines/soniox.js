@@ -1,12 +1,13 @@
 /* 실시간 번역(soniox) 파이프라인 — 단방향/양방향·채널 분리·자동 언어 잠금·실시간 TTS·저신뢰 교정.
    handleHost(realtime/host.js)가 연결마다 runSoniox(h) 를 호출한다. h = 연결 컨텍스트(구 handleHost 클로저 값). */
-import { SONIOX_API_KEY, SONIOX_MODEL, SONIOX_LANGS, CARTESIA_API_KEY, SX_MAX_FAILS, sxRetryDelay } from '../config.js';
+import { SONIOX_API_KEY, SONIOX_MODEL, SONIOX_LANGS, SONIOX_AGENT_TEXT, CARTESIA_API_KEY, SX_MAX_FAILS, sxRetryDelay } from '../config.js';
 import { saveSessions, recordTts } from '../store/index.js';
 import { newId } from '../store/sessions.js';
 import { getRoom, broadcast, broadcastAudio, hasAudioListener, sendAudioToHosts, noteTts, isSelfEcho } from '../realtime/rooms.js';
 import { openSonioxWs, buildSonioxContext } from '../vendors/soniox.js';
 import { cartesiaVoiceId, cartesiaTTSStream, cartesiaWarmup } from '../vendors/cartesia.js';
 import { echoNorm, echoMatch } from '../util/security_util.js';
+import { agentTextFeed } from '../util/agent_text.js';
 import { isAckOnly, stripFillers, langJudge, flipHold, speechWeight, endsSentence, stripSentenceEnd } from '../util/pipeline_util.js';
 
 /* ---------- Soniox 실시간 전사·번역(SONIOX_MODEL) -> gpt 다듬기 ---------- */
@@ -15,7 +16,7 @@ const CARRY_MS = 1800;   // 첫마디 뒤 이만큼 말이 없으면 그대로 �
 const LONG_CARD = 120;   // 이만큼 쌓이면 문장 끝에서 카드를 나눈다
 
 export function runSoniox(h) {
-  const { ws, sessionId, session, pipeline, inLang, idle, toHost, liveSend, upsertItem, polishCommit, maybeConfFix, bumpIdle } = h;
+  const { ws, sessionId, session, pipeline, inLang, idle, toHost, liveSend, upsertItem, polishCommit, bumpIdle } = h;
   if (!SONIOX_API_KEY) {
     toHost({ type: 'status', message: 'SONIOX_API_KEY 미설정 — soniox 모드 사용 불가' });
     return;
@@ -57,6 +58,8 @@ export function runSoniox(h) {
     endpoint_sensitivity: Number.isFinite(sens) ? Math.min(1, Math.max(-1, sens)) : 0,
     max_endpoint_delay_ms: Number.isFinite(maxDelay) ? Math.min(3000, Math.max(500, maxDelay)) : 2000,
     endpoint_latency_adjustment_level: Number.isFinite(latency) ? Math.min(3, Math.max(0, Math.round(latency))) : 0,
+    // 이 기기에서 TTS 를 재생할 수 있는 세션만(켜 두기만 하면 글자를 보내기 전엔 아무 일도 없다 — 번역 중 TTS 를 켜도 바로 쓰게)
+    ...(agentFeed ? { enable_agent_text_input: true } : {}),
     language_hints: sxMode === 'two' ? [sxA, sxB] : (inLang ? [inLang] : (lockedIn ? [sxTarget, lockedIn] : L4)),
     translation: sxMode === 'two'
       ? { type: 'two_way', language_a: sxA, language_b: sxB }
@@ -73,6 +76,10 @@ export function runSoniox(h) {
 
   let sx = null;          // 현재 엔진 소켓(예기치 않은 끊김 시 자동 재연결)
   let sxReady = false;
+  // 이 기기 스피커로 나가는 TTS 를 재생 속도에 맞춰 엔진에 알림(에이전트 텍스트 입력) — 마이크로 되들어온 소리를 사용자 말로 적지 않게
+  const agentFeed = SONIOX_AGENT_TEXT && canTts && CARTESIA_API_KEY
+    ? agentTextFeed((m) => { if (sx && sxReady) { try { sx.send(JSON.stringify(m)); } catch {} } })
+    : null;
   let sxClosed = false;   // 사용자 중지/유휴 종료 — 재연결 금지
   let pending = [];
   /* 입력 언어 자동 감지 → 1회 재연결(데스크 lockDetected 와 동일 패턴).
@@ -92,7 +99,7 @@ export function runSoniox(h) {
   let relockPending = false; // 재감지로 의도적으로 닫는 중인지
   // (삭제됨) 무음 시 '조용한 재연결'(인식 컨텍스트 플러시, 2026-07-13) — 재연결마다 config 의
   // context(용어집, input_text_tokens $4/1M)가 재청구돼 Soniox 비용의 71%를 차지했던 원인이라 제거.
-  // 오인식 고착은 confFix(저신뢰 자동 교정)가 완화한다. 상세: PROJECT_NOTES 2026-07-15.
+  // 상세: PROJECT_NOTES 2026-07-15.
   idle.close = () => { sxClosed = true; try { sx && sx.close(); } catch {} };
   // 번역 방향 정보 — 뷰어(모바일)가 언어 표시에 사용
   // 채널 분리(양방향 통역을 채널별 단방향으로) — 엔진은 단방향이지만 세션은 a↔b 양방향으로 보여야
@@ -122,8 +129,6 @@ export function runSoniox(h) {
   let spkNotified = false; // 화자 감지 1회 알림
   let noSpkWarned = false; // 화자 미반환 1회 경고
   let srcToks = [];        // 원문 확정 토큰 [[text, confidence], ...] — 저신뢰 하이라이트 + 추후 평가용
-  let dropAcks = ws._dropAcks === '1'; // 고급옵션: 단독 응답어(네/Yes/Okay) 기록 생략(라이브 토글 가능)
-  let confFix = ws._confFix === '1'; // 고급옵션: 저신뢰 자동 교정(라이브 토글 가능)
 
   const targetKeyFor = (src) => (sxMode === 'two' ? (src === sxA ? sxB : sxA) : sxTarget);
   // 채널 분리: 반대 채널의 언어가 이 채널에서 인식되면 샌 소리(스피커→마이크, 옆 사람 핀마이크)로 보고 버린다.
@@ -171,22 +176,28 @@ export function runSoniox(h) {
     const lang = ttsLang;                  // 호출 시점 타깃 언어 고정
     // 듣는 사람(이 호스트 재생 또는 '듣기' 켠 뷰어)이 없으면 만들지 않는다 — 예전엔 아무도 안 들어도 줄을 세워 합성해
     // 줄이 밀리면 나중에 '듣기'를 켠 사람에게 이전 문장이 몰아서 나갔고, Cartesia 요금도 헛되이 나갔다(2026-10-25)
-    const listening = () => !!ws._audioOut || hasAudioListener(sessionId, lang);
+    const viewersOk = () => !session || session.viewerTts !== false; // '뷰어에서 재생 지원'
+    const listening = () => !!ws._audioOut || (viewersOk() && hasAudioListener(sessionId, lang));
     if (!listening()) return;
     const voiceId = cartesiaVoiceId(lang, gender);
     noteTts(sessionId, tx); // 자기음성(에코) 필터에 등록 — 재입력 시 인식 결과를 버림
     // 뷰어(음성 듣기 구독자) + 호스트(TTS 켠 경우)에게 재생. 재입력은 AEC + 에코 필터로 차단.
     let firstAudio = false;
+    let seg = null; // 이 기기에서 재생하는 문장 — 엔진에 재생 속도대로 알린다
     ttsChain = ttsChain.then(() => {
       if (!listening()) return undefined; // 줄에서 차례가 왔을 때 듣던 사람이 모두 껐으면 건너뜀
       if (forId) stampTm(forId, 'tq'); // 합성 요청 시각 — 직렬 큐 대기 후, 실제 요청 직전(ta−tq=순수 합성 지연)
       recordTts(pipeline === 'desk' ? 'desk' : 'live', tx.length); // 파이프라인별 자체 사용량
+      if (agentFeed && ws._audioOut) seg = agentFeed.begin(tx);
       return cartesiaTTSStream(tx, voiceId, lang, (b64) => {
         if (!firstAudio) { firstAudio = true; if (forId) stampTm(forId, 'ta'); } // 첫 오디오 청크 시각
-        broadcastAudio(sessionId, b64, lang);
-        if (ws._audioOut) sendAudioToHosts(sessionId, b64, lang);
+        if (viewersOk()) broadcastAudio(sessionId, b64, lang);
+        if (ws._audioOut) {
+          sendAudioToHosts(sessionId, b64, lang);
+          if (seg) agentFeed.audio(seg, Buffer.byteLength(b64, 'base64'));
+        }
       });
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => { if (seg) agentFeed.end(seg); });
   };
   const flushTtsSentences = () => {
     if (!ttsOn) return;
@@ -261,7 +272,6 @@ export function runSoniox(h) {
     if (diar && !sawSpeaker && !noSpkWarned) { noSpkWarned = true; toHost({ type: 'status', message: '화자 구분: 엔진이 화자 정보를 반환하지 않음(번역/엔드포인트와 동시 사용 시 발생 가능)' }); }
     if (!id || !txt) { if (id) liveSend(id, {}, null, null); return; } // 비확정만 있던(또는 잡음뿐인) 고스트 카드 제거
     // 고급옵션: 단독 응답어(네/Yes/Okay 단독 발화) 기록 생략
-    if (dropAcks && isAckOnly(txt)) { liveSend(id, {}, null, null); return; }
     // TTS 자기음성 재입력(에코) → 확정하지 않고 화면 표시도 제거
     if (isSelfEcho(sessionId, txt)) { liveSend(id, {}, null, null); return; }
     // 채널 분리: 반대 채널 언어(샌 소리) 또는 반대 채널이 방금 확정한 같은 문장 → 버림
@@ -278,7 +288,6 @@ export function runSoniox(h) {
     lastCommitted = { id, key: target, out, at: Date.now(), src }; // 커밋 직후 늦게 도착하는 번역 꼬리 귀속용
     lockDetected(src); // 자동 감지: 첫 확정 발화의 언어로 힌트·용어집을 좁혀 1회 재연결
     if (tgt) polishCommit(id, target, txt, tgt); // 번역 다듬기(nano) — 직역투 후교정(비동기 카드 교체)
-    if (confFix) maybeConfFix(id, toks, txt, src, target); // 저신뢰 자동 교정(고급옵션)
     // 실시간 TTS: 발화 중 문장 단위로 이미 흘려보냈고, 여기선 남은 꼬리만 합성.
     //  재입력은 브라우저 AEC(마이크 경로) + 서버 에코 텍스트 필터(시스템 캡처·기기 간 경로)로 차단.
     // 출력 언어로 말한 발화는 읽어 줄 번역이 없다 — 방금 한 말을 그대로 되읽지 않는다
@@ -425,6 +434,7 @@ export function runSoniox(h) {
   cur.on('close', () => {
     if (sx !== cur) return;
     sxReady = false; // 끊긴 소켓으로 send 하지 않도록(이전엔 true 로 남아 조용히 버려졌음)
+    if (agentFeed) agentFeed.cancel(); // 새 소켓은 이전 문장을 모른다
     if (!sxClosed && !idle.stopped) {
       // 언어 재감지로 우리가 의도해 닫은 경우는 '실패'가 아니다 — 백오프·8회 상한을 건드리지 않고
       // 즉시 새 config 로 재연결한다(그 사이 발화는 pending 리플레이 버퍼가 복구).
@@ -463,13 +473,10 @@ export function runSoniox(h) {
       if (m.type === 'stop') {
         sxClosed = true;
         gracefulEngineStop();
-      } else if (m.type === 'dropAcks') { // 고급옵션: 단독 응답어 생략 라이브 토글
-        dropAcks = !!m.on;
-      } else if (m.type === 'confFix') { // 고급옵션: 저신뢰 자동 교정 라이브 토글
-        confFix = !!m.on;
       } else if (m.type === 'tts') {
         // 녹음 중 TTS 토글: 합성 on/off + 이 기기(호스트) 재생 여부. local=false 면 '뷰어에게만'(합성은 하되 호스트로 안 보냄)
         ws._audioOut = !!m.on && m.local !== false;
+        if (agentFeed && !ws._audioOut) agentFeed.cancel(); // 이 기기 재생을 껐다 — 보내던 문장은 끊김
         ttsOn = !!m.on && !!CARTESIA_API_KEY && canTts;
         if (m.gender === 'm' || m.gender === 'f') gender = m.gender;
         if (!!m.on && !CARTESIA_API_KEY) toHost({ type: 'status', message: 'CARTESIA_API_KEY 미설정 — 음성 재생을 사용할 수 없습니다.' });
