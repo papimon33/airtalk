@@ -194,7 +194,8 @@ test('권한 이전: 권한 필드가 없던 기존 계정은 부팅 시 모두 
   assert.deepEqual(list.find((u) => u.id === 'old').perms, { tts: true, desk: true });
 });
 
-test('재시작(배포) 직전에 로그인해도 정상 종료(SIGTERM)면 로그인이 유지된다', { timeout: 40000 }, async (t) => {
+// Windows 는 child.kill('SIGTERM') 이 정상 종료 처리 없이 바로 끝내므로 건너뛴다(CI·운영 서버는 Linux).
+test('재시작(배포) 직전에 로그인해도 정상 종료(SIGTERM)면 로그인이 유지된다', { timeout: 40000, skip: process.platform === 'win32' && 'Windows 는 SIGTERM 정상 종료를 보낼 수 없음' }, async (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'airtalk-seat-'));
   let srv = await bootServer({ DATA_DIR: dataDir });
   t.after(() => (srv.child.exitCode == null && srv.child.signalCode == null ? srv.stop() : undefined));
