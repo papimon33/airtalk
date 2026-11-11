@@ -3,7 +3,8 @@ import { TARGET_LANG, ITEMS_CAP, REFINE_MODEL } from '../config.js';
 import { saveSessions, addUsage, recordUsage } from '../store/index.js';
 import { getSession } from '../store/sessions.js';
 import { getRoom, broadcast, rooms, maybeGcRoom } from './rooms.js';
-import { polishText, translateText } from '../vendors/openai.js';
+import { polishText, translateText, retranslateText } from '../vendors/openai.js';
+import { translationCut } from '../util/pipeline_util.js';
 import { runSoniox } from '../pipelines/soniox.js';
 import { runDesk, runDeskGuestFeed } from '../pipelines/desk.js';
 import { runTranslate } from '../pipelines/translate.js';
@@ -151,19 +152,32 @@ export function handleHost(ws) {
   // 확정 카드 다듬기: 비동기 nano → 카드가 살아 있고 텍스트가 그대로일 때만 덮어쓰기
   // (그 사이 늦은 번역 꼬리가 먼저 덮었으면 양보). 응대 종료로 deskLog 에
   // 아카이브된 뒤 도착하면 기록만 조용히 갱신(뷰어 방송 불필요).
-  const polishCommit = (id, key, src, tgt) => {
-    polishText(src, tgt, key, polishCtx(key, id)).then((out) => {
-      if (!out) return;
-      const it = session && Array.isArray(session.items) ? session.items.find((x) => x.id === id) : null;
-      if (it && it.texts && it.texts[key] === tgt) { upsertItem(id, { [key]: out }); return; }
-      if (session && Array.isArray(session.deskLog)) {
-        for (let i = session.deskLog.length - 1; i >= 0 && i >= session.deskLog.length - 2; i--) {
-          const e = session.deskLog[i];
-          const a = e && Array.isArray(e.items) ? e.items.find((x) => x.id === id) : null;
-          if (a && a.texts && a.texts[key] === tgt) { a.texts[key] = out; saveSessions(session.id); return; }
-        }
+  const findItem = (id) => (session && Array.isArray(session.items) ? session.items.find((x) => x.id === id) : null);
+  const applyPolish = (id, key, base) => (out) => {
+    if (!out) return;
+    const it = findItem(id);
+    if (it && it.texts && it.texts[key] === base) { upsertItem(id, { [key]: out }); return; }
+    if (session && Array.isArray(session.deskLog)) {
+      for (let i = session.deskLog.length - 1; i >= 0 && i >= session.deskLog.length - 2; i--) {
+        const e = session.deskLog[i];
+        const a = e && Array.isArray(e.items) ? e.items.find((x) => x.id === id) : null;
+        if (a && a.texts && a.texts[key] === base) { a.texts[key] = out; saveSessions(session.id); return; }
       }
-    }).catch(() => {});
+    }
+  };
+  const polishCommit = (id, key, src, tgt) => {
+    if (translationCut(src, tgt)) {
+      // 엔진 번역이 중간에 끊긴 듯하다 — 확정 직후엔 번역 꼬리가 늦게 붙기도 하므로 잠깐 기다린 뒤 다시 보고,
+      // 그래도 끊겨 있으면 원문 전체를 다시 번역한다(다듬기는 빠진 내용을 채우지 않는다)
+      setTimeout(() => {
+        const it = findItem(id);
+        const cur = (it && it.texts && it.texts[key]) || tgt;
+        const job = translationCut(src, cur) ? retranslateText(src, key, polishCtx(key, id)) : polishText(src, cur, key, polishCtx(key, id));
+        job.then(applyPolish(id, key, cur)).catch(() => {});
+      }, 2500);
+      return;
+    }
+    polishText(src, tgt, key, polishCtx(key, id)).then(applyPolish(id, key, tgt)).catch(() => {});
   };
 
   // 파이프라인 모듈에 넘기는 연결 컨텍스트 — 구 server.js 에선 run*() 이 handleHost 안의 중첩 함수로 이 값들을 클로저로 공유했다

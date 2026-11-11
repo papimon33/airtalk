@@ -1,7 +1,7 @@
 /* OpenAI(chat completions) — 번역 다듬기(polish)·번역·띄어쓰기 교정 */
-import { OPENAI_API_KEY, REFINE_MODEL, LANG_NAMES } from '../config.js';
+import { OPENAI_API_KEY, REFINE_MODEL, RETRANSLATE_MODEL, LANG_NAMES } from '../config.js';
 import { termsConfig } from '../store/index.js';
-import { isAckOnly, sanitizeTranslation, langScriptOk, polishLengthOk } from '../util/pipeline_util.js';
+import { isAckOnly, sanitizeTranslation, langScriptOk, polishLengthOk, copiesContext, termsKept, addsNote, translationCut, termHintsFrom } from '../util/pipeline_util.js';
 
 /* ------------------------------------------------------------------ */
 /*  번역 출력 정화: 소형 모델이 끼워넣는 군더더기 제거                    */
@@ -39,8 +39,11 @@ export async function polishText(src, tgt, tgtLang, context) {
     `- 출력 언어는 반드시 ${langName}. 원문 언어로 되돌려 쓰지 않는다.\n` +
     '- 의미 추가·삭제 금지. 어색한 직역 어순·조사·표현만 자연스럽게 바꾼다.\n' +
     '- [직전 대화]는 맥락 파악용 — "처음부터요" 같은 단답은 맥락에 맞게 자연스럽게 보완해도 된다.\n' +
+    '- 출력에는 [기계 번역]의 내용만 담는다. [직전 대화]의 문장을 옮겨 붙이지 않는다.\n' +
+    '- 평서문·의문문 같은 문장 종류와 높임 말투를 바꾸지 않는다.\n' +
+    '- 고유명사·숫자·연도·약어·전문 용어는 틀린 것이 분명할 때만 고친다.\n' +
     '- 이미 자연스러우면 고치지 말고 그대로 출력한다.\n' +
-    '- 출력은 고친 번역문 한 줄뿐(설명·따옴표·머리말 금지).' +
+    '- 출력은 고친 번역문 한 줄뿐. 설명·따옴표·머리말·괄호 메모를 넣지 않는다.' +
     // 교정 예는 한국어 방향일 때만 — 다른 언어로 다듬을 때 한국어 예시가 있으면 한국어로 고쳐 쓰는 일이 있었다
     (tgtLang === 'ko'
       ? '\n교정 예: "유럽 내 도입 사례에서요." → "유럽 쪽 구축 사례를 보면요." / ' +
@@ -70,8 +73,73 @@ export async function polishText(src, tgt, tgtLang, context) {
     const out = sanitizeTranslation((d?.choices?.[0]?.message?.content || '').trim());
     if (!out || out === t || !polishLengthOk(out, t)) return null; // 무변경·폭주(해설 섞임)·내용 유실 방어
     if (!langScriptOk(out, t, tgtLang)) return null; // 원문 언어로 되돌아갔거나 번체자 — 기계 번역을 그대로 둔다
+    if (copiesContext(out, t, context)) return null; // 직전 대화 문장을 옮겨 붙임 — 말하지 않은 내용
+    if (addsNote(out, t)) return null; // 기계 번역에 없던 괄호 — 모델의 교정 메모가 섞임
+    if (!termsKept(out, t, termTargets(tgtLang))) return null; // 엔진이 용어집대로 옮긴 용어를 다듬기가 지움
     return out;
   } catch { return null; }
+}
+
+/* ---- 다시 번역: 엔진 번역이 중간에 끊긴 카드(translationCut)만 원문 전체를 새로 번역 ----
+   지명을 길게 나열하면 Soniox 번역이 '…마닐라,'에서 멈춘다(2026-11-11, 엔진 원본 메시지로 확인).
+   다듬기는 내용 추가를 막아 두어 빠진 부분을 채울 수 없으므로 따로 번역한다. 원문에 나온 등록 용어 표기를 함께 준다.
+   결과가 목표 언어가 아니거나 여전히 끊겨 있으면 null(엔진 번역 유지). */
+export async function retranslateText(src, tgtLang, context) {
+  if (!OPENAI_API_KEY) return null;
+  const s = String(src || '').trim();
+  if (!s || s.length > POLISH_MAX_CHARS * 2) return null;
+  const langName = tgtLang === 'zh' ? '중국어 간체(简体中文)' : LANG_NAMES[tgtLang] || tgtLang;
+  const hints = termHintsFrom(termsConfig.entries, s, tgtLang);
+  const sys =
+    `너는 공항 현장의 전문 통역사다. [원문]을 자연스러운 ${langName} 구어체로 빠짐없이 번역하라.\n` +
+    '- 원문에 나열된 지명·이름·숫자를 하나도 빼지 않는다.\n' +
+    `- 지명·인명·기관명은 ${langName}에서 통용되는 표준 표기로 쓴다.\n` +
+    (hints.length ? `- 용어 표기: ${hints.join(' / ')}\n` : '') +
+    '- [직전 대화]는 맥락 파악용이다. 그 문장을 옮겨 쓰지 않는다.\n' +
+    '- 출력은 번역문 한 줄뿐. 설명·따옴표·머리말·괄호 메모를 넣지 않는다.';
+  const body = {
+    model: RETRANSLATE_MODEL,
+    max_completion_tokens: Math.max(600, s.length * 5),
+    messages: [
+      { role: 'system', content: sys },
+      { role: 'user', content: `[직전 대화]\n${(context || '(없음)').slice(0, 600)}\n\n[원문] ${s}` },
+    ],
+  };
+  const re = reasoningEffort(RETRANSLATE_MODEL);
+  if (re) body.reasoning_effort = re;
+  for (let k = 0; k < 2; k++) { // 검사에서 떨어지면 한 번 더
+    try {
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (d?.choices?.[0]?.finish_reason === 'length') continue;
+      const out = sanitizeTranslation((d?.choices?.[0]?.message?.content || '').trim());
+      // 목표 언어가 아니거나, 여전히 끊겼거나, 원문에 없던 괄호(메모)가 붙었으면 버린다
+      if (!out || !langScriptOk(out, '', tgtLang) || translationCut(s, out) || addsNote(out, s)) continue;
+      return out;
+    } catch { /* 다시 시도 */ }
+  }
+  return null;
+}
+
+/* 용어 설정에 등록된 목표 언어 표기 목록(다듬기 용어 보존 검사용) — 용어 설정이 바뀔 때만 다시 만든다 */
+let _termCache = { at: -1, byLang: {} };
+function termTargets(lang) {
+  const at = termsConfig.updatedAt || 0;
+  if (_termCache.at !== at) _termCache = { at, byLang: {} };
+  if (!_termCache.byLang[lang]) {
+    const set = new Set();
+    for (const e of termsConfig.entries || []) {
+      const v = e && e.names && String(e.names[lang] || '').trim();
+      if (v && v.length >= 2) set.add(v);
+    }
+    _termCache.byLang[lang] = [...set];
+  }
+  return _termCache.byLang[lang];
 }
 
 export async function translateText(text, targetLang, polish, context, model) {

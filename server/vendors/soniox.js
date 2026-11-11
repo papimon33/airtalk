@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import { SONIOX_WS_URL, SONIOX_API_KEY, SONIOX_MODEL } from '../config.js';
 import { termsConfig } from '../store/index.js';
 import { TERM_LANGS } from '../store/terms.js';
+import { trimScopedTerms } from '../util/pipeline_util.js';
 
 // Soniox 실시간 STT 연결 — 키는 연결 요청의 Authorization 헤더로 보낸다.
 // start(config) 메시지의 api_key 는 2027-01-15 에 중단되므로 config 에는 키를 넣지 않는다.
@@ -28,18 +29,28 @@ const DESK_GENERAL_CONTEXT = [
    쌍이 자리를 차지했고, context 가 한도(9500자)를 1.9배 초과해 뒤쪽 항목(항공사 번역쌍 전체)이
    잘려 'Jeju Air→제주에어' 같은 오역이 났다. 2026-07-29 세션 로그 분석 근거. */
 export function buildSonioxContextRaw(langs, opts = {}) {
+  return collectSonioxContext(langs, opts).ctx;
+}
+// context + 각 번역쌍·인식어가 어느 '언어 지정 용어'에서 왔는지(한도 초과 때 먼저 뺄 순서). 전체 언어 용어에서 온 것은 null.
+function collectSonioxContext(langs, opts = {}) {
   const desk = !!opts.desk;
   const target = opts.target && TERM_LANGS.includes(opts.target) ? opts.target : null;
   const L = [...new Set((langs || []).filter((c) => TERM_LANGS.includes(c)))];
   if (!L.length) L.push('ko', 'en');
   const cs = termsConfig.categoryScope || {};
-  const terms = new Set();
+  const terms = new Map(); // 인식어 → 만든 언어 지정 용어의 번호(전체 언어 용어도 만들었으면 null)
   const pairs = [];
+  const pairMeta = [];
   const seen = new Set();
+  let from = null; // 지금 처리 중인 용어: 언어 지정이면 목록 번호, 아니면 null
+  const addTerm = (v) => {
+    if (!terms.has(v)) terms.set(v, from);
+    else if (from == null) terms.set(v, null); // 전체 언어 용어도 쓰는 인식어는 먼저 빼지 않는다
+  };
   const addPair = (a, b) => {
     if (!a || !b || a === b) return;
     const k = a + '||' + b;
-    if (!seen.has(k)) { seen.add(k); pairs.push({ source: a, target: b }); }
+    if (!seen.has(k)) { seen.add(k); pairs.push({ source: a, target: b }); pairMeta.push(from); }
   };
   // 표기 결정: 한·영·일은 명시 표기만(비면 없음), 그 외 언어(zh 포함 미입력 시·es/fr/ru 등)는
   // 영어 표기로 폴백 — 어떤 세션 언어에서도 고유명사가 최소 영어 브랜드명으로 일관 번역되도록 보장.
@@ -49,37 +60,40 @@ export function buildSonioxContextRaw(langs, opts = {}) {
     if (lg === 'ko' || lg === 'en' || lg === 'ja') return '';
     return String(names.en || '').trim();
   };
-  for (const e of termsConfig.entries || []) {
-    if (!e || !e.names || !e.names.ko) continue;
+  (termsConfig.entries || []).forEach((e, idx) => {
+    if (!e || !e.names || !e.names.ko) return;
     const scope = cs[e.category] || { desk: true, session: true };
-    if (desk ? scope.desk === false : scope.session === false) continue; // 카테고리 적용대상(데스크 항공용어 제외 등)
+    if (desk ? scope.desk === false : scope.session === false) return; // 카테고리 적용대상(데스크 항공용어 제외 등)
     const scoped = Array.isArray(e.scope) && !e.scope.includes('*');
-    if (scoped && !e.scope.some((sl) => L.includes(sl))) continue;       // 언어 스코프
-    if (e.mode === 'recognize') { const v = String(e.names.ko || '').trim(); if (v) terms.add(v); continue; }
-    for (const lg of L) { const v = nameFor(e.names, lg); if (v) terms.add(v); } // 활성 언어 표기 → 인식 힌트
+    if (scoped && !e.scope.some((sl) => L.includes(sl))) return;       // 언어 스코프
+    // 한도 초과 때 먼저 뺄 용어: 언어 지정 용어(지명 등). 항공사 약칭(国航·JAL 등, 기본 시드)은 핵심이라 제외 — 지명이 없으면 기존과 똑같이 자른다
+    from = scoped && e.category !== 'airline' ? idx : null;
+    if (e.mode === 'recognize') { const v = String(e.names.ko || '').trim(); if (v) addTerm(v); return; }
+    for (const lg of L) { const v = nameFor(e.names, lg); if (v) addTerm(v); } // 활성 언어 표기 → 인식 힌트
     const ko = String(e.names.ko || '').trim();
     if (e.mode === 'inputOnly') {
-      if (!ko || !L.includes('ko')) continue;
+      if (!ko || !L.includes('ko')) return;
       for (const lg of L) { if (lg === 'ko') continue; addPair(String(e.names[lg] || '').trim(), ko); } // 외국어 → ko 단방향(약칭은 폴백 없음)
     } else if (target) { // pair + 단방향 세션: 실제 번역 방향(X→타깃)만 생성
       for (const a of L) { if (a !== target) addPair(nameFor(e.names, a), nameFor(e.names, target)); }
     } else { // pair + 양방향(또는 타깃 미지정): 활성 언어 간 전 방향
       for (const a of L) for (const b of L) { if (a !== b) addPair(nameFor(e.names, a), nameFor(e.names, b)); }
     }
-  }
+  });
   const ctx = {};
   if (desk && DESK_GENERAL_CONTEXT.length) ctx.general = DESK_GENERAL_CONTEXT; // 데스크 배경(공항 안내데스크)
-  if (terms.size) ctx.terms = [...terms];
+  if (terms.size) ctx.terms = [...terms.keys()];
   if (pairs.length) ctx.translation_terms = pairs;
-  return Object.keys(ctx).length ? ctx : null;
+  return { ctx: Object.keys(ctx).length ? ctx : null, pairMeta, termMeta: [...terms.values()] };
 }
 export function buildSonioxContext(langs, opts = {}) {
-  const ctx = buildSonioxContextRaw(langs, opts);
+  const { ctx, pairMeta, termMeta } = collectSonioxContext(langs, opts);
   if (!ctx) return null;
-  // 한도 방어: 초과 시 번역쌍부터, 다음 인식 힌트를 뒤에서부터 잘라낸다(전부 잘리면 경고만).
+  // 한도 방어 ① 언어 지정 용어(예: 중국어 지명)를 목록 뒤쪽부터 통째로 먼저 뺀다 — 새로 넣은 지명이 기존 용어를 밀어내지 않게
+  let dropped = trimScopedTerms(ctx, pairMeta, termMeta, 9500);
+  // 한도 방어 ② 그래도 넘치면 번역쌍부터, 다음 인식 힌트를 뒤에서부터 잘라낸다(전부 잘리면 경고만).
   // 초과분에 비례해 청크로 제거 — 대용량 업로드(수천 항목)여도 몇 번의 stringify 로 반드시 한도 안에 들어오고,
   // 항목 1개씩 pop×전체 재직렬화로 이벤트루프를 수초 막던 문제도 없음.
-  let dropped = 0;
   for (let pass = 0; pass < 60; pass++) {
     const len = JSON.stringify(ctx).length;
     if (len <= 9500) break;

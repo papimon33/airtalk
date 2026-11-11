@@ -53,17 +53,130 @@ export function stripFillers(text) {
    기계 번역에 없던 한글이 생기거나(목표가 한국어가 아닐 때), 중국어인데 번체 전용 글자가 생기면 다듬기를 버린다. */
 const HANGUL = /[\uAC00-\uD7A3]/;
 const ZH_TRAD = /[這們個說會對為與關於運營報內開發業務數據機場資訊處現進過還讓統點體號時間長門東車電話經實際從後當種樣檢區國標準輸繼續認識讀寫導應]/;
+/* 한자·가나도 같다: 목표가 중국어·일본어가 아닌데 기계 번역에 없던 한자·가나가 생기면 원문 글자가 샌 것이다
+   (2026-11-11 중→한 테스트: '어디서 받나요?' → '어디서办理하나요?'). */
+const HAN = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/;
+const KANA = /[\u3040-\u30FF]/;
 /* 다듬기 결과 길이 검사: 해설이 섞여 크게 늘었거나, 내용이 빠져 크게 줄었으면 기계 번역을 유지한다.
-   짧은 문장은 자연스럽게 고치면서 많이 줄 수 있으니(31자 → 18자) 40자 이상일 때만 줄어든 비율을 본다. */
+   짧은 문장은 자연스럽게 고치면서 많이 줄 수 있으니(31자 → 18자) 40자 이상일 때만 줄어든 비율을 본다.
+   20자 이상 문장이 1.5배 넘게 늘면 내용이 덧붙은 것이다(2026-11-11 BBC 인터뷰: 앞 사람 말이 뒤에 붙어 85자 → 150자).
+   짧은 단답은 맥락으로 보완할 수 있게(프롬프트 허용) 늘어나는 비율을 따지지 않는다. */
 export function polishLengthOk(out, raw) {
   if (out.length > raw.length * 3 + 20) return false;
+  if (raw.length >= 20 && out.length > raw.length * 1.5 + 10) return false;
   return raw.length < 40 || out.length >= raw.length * 0.6;
+}
+
+/* 다듬기가 [직전 대화]의 문장을 옮겨 붙였나: 기계 번역엔 없고 직전 대화엔 있는 8글자 조각이 출력의 20% 이상이면 버린다.
+   (2026-11-11 BBC 인터뷰: 바로 앞 카드의 번역문이 다음 카드 다듬기 결과 뒤에 그대로 붙었다) */
+export function copiesContext(out, raw, context) {
+  const n = (x) => String(x || '').replace(/[\s\p{P}\p{S}]/gu, '');
+  const o = n(out), r = n(raw), c = n(context);
+  if (o.length < 16 || !c) return false;
+  const W = 8;
+  let total = 0, copied = 0;
+  for (let i = 0; i + W <= o.length; i += 2) {
+    const g = o.slice(i, i + W);
+    total++;
+    if (!r.includes(g) && c.includes(g)) copied++;
+  }
+  return total > 0 && copied / total >= 0.2;
+}
+
+/* 다듬기가 기계 번역에 있던 등록 용어(목표 언어 표기)를 지웠나 — 지웠으면 다듬기를 버린다.
+   엔진은 용어집대로 옮겼는데 다듬기가 덮어쓰는 일이 있었다(2026-11-11 한→중: '十五五规划' → '十四五'). */
+export function termsKept(out, raw, terms) {
+  const sq = (x) => String(x || '').replace(/\s+/g, '');
+  const o = sq(out), r = sq(raw);
+  for (const t of terms || []) {
+    const k = sq(t);
+    if (k.length >= 2 && r.includes(k) && !o.includes(k)) return false;
+  }
+  return true;
+}
+
+/* 엔진 번역이 중간에 끊겼나 — 지명을 길게 나열하면 Soniox 번역이 '…마닐라,'에서 멈추고 문장 끝(<end>)이 온다
+   (2026-11-11 지명 시험, 엔진 원본 메시지로 확인: 원문은 끝까지 인식됐는데 확정 번역 조각이 더 오지 않았다).
+   원문은 문장이 끝났는데 번역이 쉼표로 끝나거나, 번역 분량이 원문의 45% 미만이면 끊긴 것으로 본다.
+   분량은 글자 종류별 가중(한자 1.5·한글 1·가나 0.8·로마자 0.35·숫자 0.5)으로 언어 차이를 맞춘다. 짧은 발화는 따지지 않는다. */
+const weightOf = (s) => {
+  let w = 0;
+  for (const ch of String(s || '')) {
+    if (HAN.test(ch)) w += 1.5;
+    else if (HANGUL.test(ch)) w += 1;
+    else if (KANA.test(ch)) w += 0.8;
+    else if (/[A-Za-z]/.test(ch)) w += 0.35;
+    else if (/[0-9]/.test(ch)) w += 0.5;
+  }
+  return w;
+};
+export function translationCut(src, tgt) {
+  const s = String(src || '').trim(), t = String(tgt || '').trim();
+  if (!s || !t) return false;
+  const ws = weightOf(s);
+  if (ws < 30) return false;
+  if (/[。．.!?！？…」』"”]$/.test(s) && /[,，、:：;；]$/.test(t)) return true;
+  return weightOf(t) < ws * 0.45;
+}
+
+/* 다시 번역할 때 넘길 용어 표기: 원문에 나온 등록 용어(어느 언어 표기든) → 목표 언어 표기, 최대 40개 */
+export function termHintsFrom(entries, src, tgtLang) {
+  const s = String(src || ''), out = [];
+  for (const e of entries || []) {
+    const to = e && e.names && String(e.names[tgtLang] || '').trim();
+    if (!to) continue;
+    for (const [lg, v] of Object.entries(e.names)) {
+      const from = String(v || '').trim();
+      if (lg === tgtLang || from.length < 2 || !s.includes(from)) continue;
+      out.push(`${from}→${to}`);
+      break;
+    }
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+/* Soniox context 한도 맞추기 ① — 언어를 지정한 용어(scope 가 특정 언어)를 목록 뒤쪽 용어부터 통째로(번역쌍·인식어 함께) 뺀다.
+   언어 지정 용어(예: 중국어 지명)는 그 언어로 잠긴 뒤엔 context 가 작아 다시 들어간다 — 잠기기 전 자동 감지(4개 언어)에서
+   새로 넣은 지명이 기존 항공사·항공 용어를 밀어내지 않게 한다(2026-11-11: 지명 87개 → 기존 용어 129개가 잘릴 뻔).
+   pairMeta·termMeta: 각 번역쌍·인식어를 만든 용어의 목록 번호(언어 지정 용어일 때) 또는 null(전체 언어 용어 — 여기선 안 뺌).
+   반환: 뺀 항목 수. ctx 를 직접 고친다. */
+export function trimScopedTerms(ctx, pairMeta, termMeta, limit) {
+  if (!ctx) return 0;
+  let len = JSON.stringify(ctx).length;
+  if (len <= limit) return 0;
+  const pairs = ctx.translation_terms || [], terms = ctx.terms || [];
+  const order = [...new Set([...pairMeta, ...termMeta].filter((x) => x != null))].sort((a, b) => b - a);
+  const cut = new Set();
+  for (const i of order) {
+    if (len <= limit) break;
+    cut.add(i);
+    pairs.forEach((p, k) => { if (pairMeta[k] === i) len -= JSON.stringify(p).length + 1; });
+    terms.forEach((t, k) => { if (termMeta[k] === i) len -= JSON.stringify(t).length + 1; });
+  }
+  if (!cut.size) return 0;
+  const keepP = pairs.filter((_, k) => !cut.has(pairMeta[k])), keepT = terms.filter((_, k) => !cut.has(termMeta[k]));
+  const dropped = pairs.length - keepP.length + terms.length - keepT.length;
+  if (ctx.translation_terms) { if (keepP.length) ctx.translation_terms = keepP; else delete ctx.translation_terms; }
+  if (ctx.terms) { if (keepT.length) ctx.terms = keepT; else delete ctx.terms; }
+  return dropped;
+}
+
+/* 다듬기가 기계 번역에 없던 괄호를 덧붙였나 — 모델의 혼잣말(교정 메모)이 섞인 것이다.
+   (2026-11-11 지명 시험: '와이키키(탄샹산은 의역이므로 고쳐야 하지만 고유명사와 숫자 유지)') */
+export function addsNote(out, raw) {
+  const n = (s) => (String(s || '').match(/[(（[［]/g) || []).length;
+  return n(out) > n(raw);
 }
 
 export function langScriptOk(out, raw, lang) {
   const s = String(out || ''), r = String(raw || '');
   if (lang !== 'ko' && HANGUL.test(s) && !HANGUL.test(r)) return false;
   if (lang === 'zh' && ZH_TRAD.test(s) && !ZH_TRAD.test(r)) return false;
+  if (lang !== 'zh' && lang !== 'ja') {
+    if (HAN.test(s) && !HAN.test(r)) return false;
+    if (KANA.test(s) && !KANA.test(r)) return false;
+  }
   return true;
 }
 

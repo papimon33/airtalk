@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kstDay, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
+  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms,
 } from '../server/util/pipeline_util.js';
 import { agentTextFeed } from '../server/util/agent_text.js';
 
@@ -96,6 +97,86 @@ test('polishLengthOk: 긴 번역의 뒷부분이 사라진 다듬기는 거른�
   assert.equal(polishLengthOk('가'.repeat(450), long), true, '자연스럽게 조금 줄어든 것은 허용');
   assert.equal(polishLengthOk('가'.repeat(18), '가'.repeat(31)), true, '짧은 문장은 많이 줄어도 허용');
   assert.equal(polishLengthOk('가'.repeat(200), '가'.repeat(50)), false, '해설이 섞여 크게 늘어난 경우');
+  assert.equal(polishLengthOk('가'.repeat(150), '가'.repeat(85)), false, '85자 → 150자: 앞 사람 말이 덧붙은 경우(BBC 인터뷰)');
+  assert.equal(polishLengthOk('가'.repeat(110), '가'.repeat(85)), true, '자연스럽게 조금 늘어난 것은 허용');
+  assert.equal(polishLengthOk('처음부터 다시 설명해 주시겠어요?', '처음부터요.'), true, '단답은 맥락으로 보완해도 허용');
+});
+
+test('copiesContext: 다듬기가 직전 대화 문장을 옮겨 붙이면 거른다', () => {
+  // 2026-11-11 BBC 인터뷰(黃仁勳) 02:36 — 앞 카드 번역문이 다음 카드 다듬기 뒤에 붙었다
+  const ctx = '하지만 그가 알고 있다고 가정하고, 이 스파이의 행위를 계속 이어가며 교류하고 있다면 그분은 더 이상 NVIDIA의 CEO를 맡아서는 안 됩니다.';
+  const raw = '어쨌든 그의 사생활이니까요. 공공과 사생활을 분명히 구분해야 해요. 제 생각에는 이게 영향을 미치지 않을 거예요. 그가 NVIDIA 회사 전체에 대해 취한 전략의 상황에는요, 네.';
+  const bad = '그건 그의 사생활이니까요. 공공과 사생활은 분명히 구분해야 합니다. 제 생각에는 이게 NVIDIA 전체 전략에 영향을 미치지 않을 거예요. 그가 알고 있다고 가정하고 이 스파이의 행위를 계속 이어가며 교류하고 있다면, 그분은 더 이상 NVIDIA의 CEO를 맡아서는 안 됩니다.';
+  const good = '어쨌든 그의 사생활이니까요. 공과 사는 분명히 구분해야죠. 이번 일이 NVIDIA 전체 전략에 영향을 주진 않을 거라고 봐요.';
+  assert.equal(copiesContext(bad, raw, ctx), true);
+  assert.equal(copiesContext(good, raw, ctx), false);
+  assert.equal(copiesContext('처음부터 다시 설명해 주시겠어요?', '처음부터요.', '이 시스템을 처음부터 설명해 주세요.'), false, '짧은 단답 보완은 허용');
+  assert.equal(copiesContext(good, raw, ''), false);
+});
+
+test('translationCut: 엔진 번역이 중간에 끊긴 카드를 알아본다', () => {
+  // 2026-11-11 지명 시험 — 엔진 원본 메시지에서 확정 번역이 '마닐라,'에서 멈췄다
+  const src = '日本方面，东京、大阪、福冈、名古屋、札幌和冲绳那霸都是热门航线。东南亚方面，有越南的河内、胡志明市、岘港、泰国的曼谷、清迈、普吉岛、菲律宾的马尼拉、宿务、印度尼西亚的雅加达和巴厘岛、马来西亚的吉隆坡，还有新加坡、柬埔寨金边、老挝万象和缅甸仰光。';
+  assert.equal(translationCut(src, '일본 측에서는 도쿄, 오사카, 후쿠오카, 나고야, 삿포로와 오키나와가 모두 인기 노선입니다. 동남아 측에서는 베트남 호나이, 호치민시, 덴마크 푸켓, 칭다이, 마닐라,'), true);
+  assert.equal(translationCut('欧洲方面，有俄罗斯莫斯科和海参崴、英国伦敦、法国巴黎、德国法兰克福、意大利罗马、西班牙马德里、荷兰阿姆斯特丹、瑞士苏黎世、波兰华沙。', '유럽 측에는 러시아 모스크바, 모스크바, 페트르부르크, 레이마'), true, '쉼표 없이 끊겨도 분량으로');
+  // 정상 번역은 건드리지 않는다(언어쌍별 분량 차이)
+  assert.equal(translationCut('中亚和南亚方面，有蒙古乌兰巴托、哈萨克斯坦阿拉木图、乌兹别克斯坦塔什干、印度新德里和孟买，以及尼泊尔加德满都。', '중앙아시아와 남아시아에는 몽골 울란바토르, 카자흐스탄 알마티, 우즈베키스탄 타슈켄트, 인도 뉴델리와 뭄바이, 네팔 카트만두가 있습니다.'), false);
+  assert.equal(translationCut('국제선 청사 출국장으로 가시면 됩니다. 어느 항공사를 이용하시나요?', '请前往国际航班出发厅。请问您乘坐哪家航空公司？'), false, '한→중은 글자 수가 줄어도 정상');
+  assert.equal(translationCut('Passengers can now check in with face recognition and drop their bags by themselves.', '이제 승객들은 얼굴 인식으로 체크인하고 짐도 직접 부칠 수 있습니다.'), false, '영→한');
+  assert.equal(translationCut('你好。', '안녕하세요,'), false, '짧은 발화는 따지지 않음');
+});
+
+test('trimScopedTerms: 한도를 넘으면 언어 지정 용어를 목록 뒤쪽부터 먼저 빼고 전체 언어 용어는 남긴다', () => {
+  // 전체 언어 용어(항공사) 2개 + 중국어 지정 지명 3개(목록 번호 5·6·7)
+  const ctx = {
+    terms: ['대한항공', '大韩航空', '西安', '시안', '郑州', '정저우', '银川', '인촨'],
+    translation_terms: [{ source: '大韩航空', target: '대한항공' }, { source: '西安', target: '시안' }, { source: '郑州', target: '정저우' }, { source: '银川', target: '인촨' }],
+  };
+  const termMeta = [null, null, 5, 5, 6, 6, 7, 7];
+  const pairMeta = [null, 5, 6, 7];
+  const full = JSON.stringify(ctx).length;
+  const limit = full - 30; // 지명 하나(인촨)만 빼면 들어오는 한도
+  const n = trimScopedTerms(ctx, pairMeta, termMeta, limit);
+  assert.equal(n, 3, '마지막 지명(银川·인촨·번역쌍)만 뺐다');
+  assert.ok(JSON.stringify(ctx).length <= limit);
+  assert.ok(ctx.terms.includes('대한항공') && ctx.terms.includes('西安'), '항공사·앞쪽 지명은 남음');
+  assert.ok(!ctx.terms.includes('银川') && !ctx.translation_terms.some((p) => p.source === '银川'));
+  // 한도 안이면 그대로
+  const c2 = { terms: ['a'], translation_terms: [{ source: 'a', target: 'b' }] };
+  assert.equal(trimScopedTerms(c2, [3], [3], 9500), 0);
+  // 언어 지정 용어만으로 모자라면 그것만 다 빼고 나머지는 기존 방식(호출하는 쪽)에 맡긴다
+  const c3 = { terms: ['대한항공', '西安'], translation_terms: [{ source: '大韩航空', target: '대한항공' }, { source: '西安', target: '시안' }] };
+  assert.equal(trimScopedTerms(c3, [null, 4], [null, 4], 10), 2);
+  assert.deepEqual(c3, { terms: ['대한항공'], translation_terms: [{ source: '大韩航空', target: '대한항공' }] });
+});
+
+test('termHintsFrom: 원문에 나온 등록 용어만 목표 언어 표기로 넘긴다', () => {
+  const entries = [
+    { names: { ko: '김포', zh: '金浦', en: 'Gimpo' } },
+    { names: { ko: '중국민용항공국', zh: '民航局' } },
+    { names: { ko: '하노이', zh: '河内', en: 'Hanoi' } },
+    { names: { ko: '세부' } },
+  ];
+  assert.deepEqual(termHintsFrom(entries, '从金浦出发，民航局表示……', 'ko'), ['金浦→김포', '民航局→중국민용항공국']);
+  assert.deepEqual(termHintsFrom(entries, '김포에서 하노이로', 'zh'), ['김포→金浦', '하노이→河内']);
+  assert.deepEqual(termHintsFrom(entries, '세부 사항', 'zh'), [], '목표 언어 표기가 없으면 넘기지 않음');
+});
+
+test('addsNote: 다듬기가 기계 번역에 없던 괄호(교정 메모)를 덧붙이면 거른다', () => {
+  // 2026-11-11 지명 시험 — 모델의 혼잣말이 번역문에 섞여 나왔다
+  assert.equal(addsNote('시카고, 와이키키(탄샹산은 의역이므로 고쳐야 하지만 고유명사와 숫자 유지), 괌', '시카고, 탄샹산이 있고, 괌'), true);
+  assert.equal(addsNote('SAF(지속가능항공유) 혼합 비율을 높입니다.', 'SAF(지속가능항공유)의 혼합 비율을 높입니다.'), false, '기계 번역에도 있던 괄호는 허용');
+  assert.equal(addsNote('탑승구는 3층에 있습니다.', '탑승구 3층에 있습니다.'), false);
+});
+
+test('termsKept: 엔진이 용어집대로 옮긴 용어를 다듬기가 지우면 거른다', () => {
+  // 2026-11-11 한→중 항공 회의: 기계 번역 '十五五规划' → 다듬기 '十四五'
+  const terms = ['十五五规划', '国庆黄金周', '韩国机场公社', '低空经济'];
+  assert.equal(termsKept('最后，在中国的“十四五”规划期间……', '最后，中国在十五五规划期间……', terms), false);
+  assert.equal(termsKept('最后，在中国十五五规划期间……', '最后，中国在十五五规划期间……', terms), true);
+  assert.equal(termsKept('今年国庆黄金周', '今年国晟假期', terms), true, '기계 번역에 없던 용어를 다듬기가 넣는 것은 허용');
+  assert.equal(termsKept('올해 황금연휴 동안', '올해 국경절 황금연휴 기간에', ['국경절 황금연휴']), false);
+  assert.equal(termsKept('올해 국경절황금연휴 동안', '올해 국경절 황금연휴 기간에', ['국경절 황금연휴']), true, '띄어쓰기 차이는 무시');
 });
 
 test('langScriptOk: 다듬기가 원문 언어(한국어)로 돌아가거나 중국어를 번체로 쓰면 거른다', () => {
@@ -106,6 +187,12 @@ test('langScriptOk: 다듬기가 원문 언어(한국어)로 돌아가거나 중
   assert.equal(langScriptOk('本日の報告はAI・BIMセンターの運営についてです。', '今日の報告はAI・BIMセンター運営方案です。', 'ja'), true, '일본어 한자는 번체 검사 대상 아님');
   assert.equal(langScriptOk('안내데스크는 2층에 있습니다.', '안내 데스크는 2층입니다.', 'ko'), true);
   assert.equal(langScriptOk('The 김포 terminal', 'The 김포 terminal opens', 'en'), true, '기계 번역에도 있던 한글은 허용');
+  // 2026-11-11 중→한 테스트: 한국어 다듬기에 원문 중국어 글자가 섞여 나왔다
+  assert.equal(langScriptOk('환불은 어디서办理하나요?', '환불은 어디서 받나요?', 'ko'), false);
+  assert.equal(langScriptOk('すみません, where is gate 3?', 'Excuse me, where is gate 3?', 'en'), false, '가나가 샌 영어 다듬기');
+  assert.equal(langScriptOk('국토교통부(國土交通部) 발표입니다.', '국토교통부(國土交通部)가 발표했습니다.', 'ko'), true, '기계 번역에도 있던 한자는 허용');
+  assert.equal(langScriptOk('登机口在3楼。', '登机口在三楼。', 'zh'), true);
+  assert.equal(langScriptOk('搭乗口は3階です。', '搭乗口は3階にあります。', 'ja'), true);
 });
 
 test('agentTextFeed: TTS 글자를 재생 0.7초 전에 맞춰 보내고, 문장 끝에 end_of_segment', () => {
