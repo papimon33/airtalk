@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kstDay, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
-  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms,
+  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens,
 } from '../server/util/pipeline_util.js';
 import { agentTextFeed } from '../server/util/agent_text.js';
 
@@ -148,6 +148,20 @@ test('trimScopedTerms: 한도를 넘으면 언어 지정 용어를 목록 뒤쪽
   const c3 = { terms: ['대한항공', '西安'], translation_terms: [{ source: '大韩航空', target: '대한항공' }, { source: '西安', target: '시안' }] };
   assert.equal(trimScopedTerms(c3, [null, 4], [null, 4], 10), 2);
   assert.deepEqual(c3, { terms: ['대한항공'], translation_terms: [{ source: '大韩航空', target: '대한항공' }] });
+});
+
+test('estimateContextTokens: Soniox 가 세는 방식(용어 문자열 + 항목당 비용)으로 토큰을 추정한다', () => {
+  // 기본 10 + 내용(한중일·한글 글자당 1, 영숫자 4글자당 1) + 인식어 1개당 1 / 번역쌍 1개당 3.5
+  assert.equal(estimateContextTokens({ terms: ['김포공항'] }), 10 + 4 + 1);
+  assert.equal(estimateContextTokens({ terms: ['ゲート'] }), 10 + 3 + 1);
+  assert.equal(estimateContextTokens({ terms: ['ICAO', 'A-CDM'] }), 10 + (1 + 1) + (1 + 1 + 1 + 1), 'A-CDM = A·-·CDM');
+  assert.equal(estimateContextTokens({ translation_terms: [{ source: '金浦机场', target: '김포공항' }] }), Math.ceil(10 + 4 + 4 + 3.5));
+  // 2026-11-11 실측(거부 메시지의 정확한 토큰 수)과 2% 안
+  const ko = Array.from({ length: 2500 }, (_, i) => '가나다'.slice(0, 2 + (i % 2)) + (i % 3 ? '' : '라')); // 2~4자
+  const chars = ko.reduce((a, s) => a + s.length, 0);
+  assert.equal(estimateContextTokens({ terms: ko }), 10 + chars + 2500);
+  const actualPerTerm = 9996 / (7505 + 2500); // 실측: 한글 인식어 2,500개(7,505자) = 9,996토큰
+  assert.ok(Math.abs(actualPerTerm - 1) < 0.02);
 });
 
 test('termHintsFrom: 원문에 나온 등록 용어만 목표 언어 표기로 넘긴다', () => {

@@ -3,7 +3,7 @@ import { WebSocket } from 'ws';
 import { SONIOX_WS_URL, SONIOX_API_KEY, SONIOX_MODEL } from '../config.js';
 import { termsConfig } from '../store/index.js';
 import { TERM_LANGS } from '../store/terms.js';
-import { trimScopedTerms } from '../util/pipeline_util.js';
+import { trimScopedTerms, estimateContextTokens } from '../util/pipeline_util.js';
 
 // Soniox 실시간 STT 연결 — 키는 연결 요청의 Authorization 헤더로 보낸다.
 // start(config) 메시지의 api_key 는 2027-01-15 에 중단되므로 config 에는 키를 넣지 않는다.
@@ -23,7 +23,7 @@ const DESK_GENERAL_CONTEXT = [
 //  - mode 'recognize' : 언어무관 인식 힌트만
 //  - scope: '*' 아니면 그 언어가 활성일 때만 주입 / categoryScope: 데스크·일반세션 적용 여부
 //  - 데스크 세션은 general(공항 안내데스크 배경)도 함께 주입 — 저빈도 단어 인식 보정.
-//  - 폴백(en→ko) 없음: 명시된 언어 표기만 사용. 전체 한도(8,000토큰≈10,000자) 방어는 유지.
+//  - 폴백(en→ko) 없음: 명시된 언어 표기만 사용. 전체 한도(8,000토큰 — 추정 7,500토큰까지) 방어는 유지.
 /* opts.target — 단방향(one_way) 세션의 타깃 언어. 주면 번역쌍을 'X→타깃' 방향만 만든다.
    이전에는 활성 언어 전 조합(4언어=12쌍/항목)을 만들어 ja→zh 처럼 그 세션에서 절대 쓰이지 않는
    쌍이 자리를 차지했고, context 가 한도(9500자)를 1.9배 초과해 뒤쪽 항목(항공사 번역쌍 전체)이
@@ -86,18 +86,24 @@ function collectSonioxContext(langs, opts = {}) {
   if (pairs.length) ctx.translation_terms = pairs;
   return { ctx: Object.keys(ctx).length ? ctx : null, pairMeta, termMeta: [...terms.values()] };
 }
+// 한도: Soniox 는 8,000토큰(실측). 추정치(estimateContextTokens, 실측 대비 -1.8%~+4.8%)로 7,500토큰까지 쓴다.
+// (이전 9,500자 고정 한도는 한·중 기준 실제 한도의 약 40%만 써서 양방향 세션에서 용어가 불필요하게 잘렸다)
+const CONTEXT_MAX_TOKENS = 7500;
+// 이 context 의 글자 구성에 맞춘 글자 수 예산(잘라 낼 양을 글자로 계산하는 기존 로직용)
+const charBudget = (ctx) => Math.floor(JSON.stringify(ctx).length * CONTEXT_MAX_TOKENS / Math.max(1, estimateContextTokens(ctx)));
 export function buildSonioxContext(langs, opts = {}) {
   const { ctx, pairMeta, termMeta } = collectSonioxContext(langs, opts);
   if (!ctx) return null;
+  if (estimateContextTokens(ctx) <= CONTEXT_MAX_TOKENS) return ctx;
   // 한도 방어 ① 언어 지정 용어(예: 중국어 지명)를 목록 뒤쪽부터 통째로 먼저 뺀다 — 새로 넣은 지명이 기존 용어를 밀어내지 않게
-  let dropped = trimScopedTerms(ctx, pairMeta, termMeta, 9500);
+  let dropped = trimScopedTerms(ctx, pairMeta, termMeta, charBudget(ctx));
   // 한도 방어 ② 그래도 넘치면 번역쌍부터, 다음 인식 힌트를 뒤에서부터 잘라낸다(전부 잘리면 경고만).
   // 초과분에 비례해 청크로 제거 — 대용량 업로드(수천 항목)여도 몇 번의 stringify 로 반드시 한도 안에 들어오고,
   // 항목 1개씩 pop×전체 재직렬화로 이벤트루프를 수초 막던 문제도 없음.
   for (let pass = 0; pass < 60; pass++) {
+    if (estimateContextTokens(ctx) <= CONTEXT_MAX_TOKENS) break;
     const len = JSON.stringify(ctx).length;
-    if (len <= 9500) break;
-    const excess = len - 9500;
+    const excess = Math.max(1, len - charBudget(ctx));
     const arr = (ctx.translation_terms && ctx.translation_terms.length) ? ctx.translation_terms : ctx.terms;
     if (!arr || !arr.length) break;
     const avg = Math.max(8, Math.floor(len / (((ctx.translation_terms || []).length + (ctx.terms || []).length) || 1)));

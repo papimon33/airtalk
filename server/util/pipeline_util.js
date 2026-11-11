@@ -136,6 +136,31 @@ export function termHintsFrom(entries, src, tgtLang) {
   return out;
 }
 
+/* Soniox context 토큰 수 추정 — 한도는 8,000토큰(2026-11-11 실측: 거부 메시지 'Context is too long: N tokens, the maximum is 8000').
+   엔진은 JSON 글자가 아니라 용어 문자열을 센다(실측): 한자·한글·가나 글자당 1, 인식어 1개당 +1, 번역쌍 1개당 약 +3.
+   영숫자 묶음은 4글자당 1(최소 1), 기호는 1. 번역쌍은 3.5로 넉넉히 — 실측 11개 지점에서 -1.8% ~ +4.8%.
+   (글자 수로는 한·중 위주 약 24,200자, 한·영 위주 약 30,500자에서 한도에 닿아 글자 수 한도는 맞지 않는다) */
+const CJK_CHAR = /[぀-ヿ㐀-鿿豈-﫿가-힣]/;
+const strTokens = (s) => {
+  let t = 0;
+  for (const m of String(s || '').matchAll(/[぀-ヿ㐀-鿿豈-﫿가-힣]|[A-Za-z0-9]+|[^\sA-Za-z0-9]/g)) {
+    const x = m[0];
+    if (CJK_CHAR.test(x)) t += 1;
+    else if (/^[A-Za-z0-9]+$/.test(x)) t += Math.max(1, Math.ceil(x.length / 4));
+    else t += 1;
+  }
+  return t;
+};
+export function estimateContextTokens(ctx) {
+  const c = ctx || {};
+  let t = 10;
+  for (const s of c.terms || []) t += strTokens(s) + 1;
+  for (const p of c.translation_terms || []) t += strTokens(p.source) + strTokens(p.target) + 3.5;
+  for (const g of c.general || []) t += strTokens(g.key) + strTokens(g.value) + 3.5;
+  if (typeof c.text === 'string') t += strTokens(c.text);
+  return Math.ceil(t);
+}
+
 /* Soniox context 한도 맞추기 ① — 언어를 지정한 용어(scope 가 특정 언어)를 목록 뒤쪽 용어부터 통째로(번역쌍·인식어 함께) 뺀다.
    언어 지정 용어(예: 중국어 지명)는 그 언어로 잠긴 뒤엔 context 가 작아 다시 들어간다 — 잠기기 전 자동 감지(4개 언어)에서
    새로 넣은 지명이 기존 항공사·항공 용어를 밀어내지 않게 한다(2026-11-11: 지명 87개 → 기존 용어 129개가 잘릴 뻔).
