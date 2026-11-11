@@ -1,0 +1,14 @@
+[
+  { "category": "facility", "mode": "pair", "names": { "ko": "김포", "zh": "金浦", "en": "Gimpo" } },
+  { "category": "facility", "mode": "pair", "names": { "ko": "김포공항", "zh": "金浦机场", "en": "Gimpo International Airport" } },
+  { "category": "etc", "mode": "pair", "names": { "ko": "한국공항공사", "zh": "韩国机场公社", "en": "Korea Airports Corporation" } },
+  { "category": "etc", "mode": "pair", "names": { "ko": "중국민용항공국", "zh": "中国民用航空局", "en": "Civil Aviation Administration of China" } },
+  { "category": "etc", "mode": "inputOnly", "names": { "ko": "중국민용항공국", "zh": "民航局" } },
+  { "category": "etc", "mode": "pair", "names": { "ko": "국경절 황금연휴", "zh": "国庆黄金周" } },
+  { "category": "etc", "mode": "inputOnly", "names": { "ko": "국경절 황금연휴", "zh": "十一黄金周" } },
+  { "category": "etc", "mode": "pair", "names": { "ko": "제15차 5개년 계획", "zh": "十五五规划" } },
+  { "category": "etc", "mode": "inputOnly", "names": { "ko": "제15차 5개년 계획", "zh": "十五五" } },
+  { "category": "etc", "mode": "pair", "names": { "ko": "광군제", "zh": "双十一" } },
+  { "category": "aviation", "mode": "pair", "names": { "ko": "저고도 경제", "zh": "低空经济", "en": "low-altitude economy" } },
+  { "category": "aviation", "mode": "pair", "names": { "ko": "정시운항률", "zh": "航班正常率", "en": "on-time performance" } }
+]

@@ -1,7 +1,7 @@
 /* 발표·연설 음성 → 우리 서버(실제 Soniox 인식·번역 + 다듬기) 끝까지 번역 확인.
    스크립트(txt) → 문단별 Cartesia 음성(캐시) → 로컬 서버(격리 DATA_DIR, 운영 DB 안 씀)에 앱과 같은 방식으로 실시간 속도로 흘려 넣기
    → 문단별 [스크립트 원문 / 인식 원문 / 번역] 보고서(md·json). 화면에 실제로 보이는 문장(다듬기·용어집 반영)을 그대로 모은다.
-   사용: node tools/eval/speech-e2e.mjs <script.txt> [--from ko] [--to zh] [--parts N] [--name 이름] [--max-delay ms] [--dry(문단 나누기만 확인)]
+   사용: node tools/eval/speech-e2e.mjs <script.txt> [--from ko] [--to zh] [--parts N] [--name 이름] [--terms 용어.json] [--max-delay ms] [--dry(문단 나누기만 확인)]
      · 스크립트: 빈 줄 = 문단, '[1P] 제목' 줄 = 쪽 표시(읽지 않음), '====' 줄·이모지는 무시, '질문 N.'·'✅ 답변' 은 따로 읽는다.
      · --parts: 세션을 나눠 동시에 돌린다(기본: 한 묶음 9분 이하가 되게). 쪽 경계에서 나눈다.
    출력: tools/eval/out/<이름>.md·.json (git 무시). 음성 캐시: tools/eval/tts-audio/speech/
@@ -19,7 +19,10 @@ const ROOT = path.join(DIR, '..', '..');
 const CACHE = path.join(DIR, 'tts-audio', 'speech');
 const OUT = path.join(DIR, 'out');
 const RATE = 24000;
-const VOICE = { ko: '4dd4630e-19e0-4243-bca0-676ff85119b7' /* Haeun — server/vendors/cartesia.js 와 같음 */ };
+const VOICE = { // server/vendors/cartesia.js 와 같은 목소리
+  ko: '4dd4630e-19e0-4243-bca0-676ff85119b7', // Haeun
+  zh: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', // Jing(중국어 보통화)
+};
 const GAP_ITEM_S = 0.9, GAP_PAGE_S = 2.0, PART_MAX_S = 9 * 60;
 
 const args = process.argv.slice(2);
@@ -29,6 +32,7 @@ if (!file) { console.error('사용: node tools/eval/speech-e2e.mjs <script.txt> 
 const FROM = opt('from', 'ko'), TO = opt('to', 'zh');
 const MAX_DELAY = Number(opt('max-delay', 2000));
 const NAME = opt('name', path.basename(file).replace(/\.[^.]+$/, '') + '-' + TO);
+const TERMS = opt('terms') ? opt('terms').split(',').flatMap((f) => JSON.parse(fs.readFileSync(f, 'utf8'))) : null; // 여러 파일은 쉼표로 // 용어 설정 entries 배열(dialogue-e2e 와 같은 형식)
 
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split('\n')
   .map((l) => l.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/)).filter(Boolean).map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]));
@@ -43,7 +47,7 @@ function clean(t) {
 function parse(text) {
   const items = [];
   let page = '', buf = [];
-  const flush = () => { const t = clean(buf.join(' ')); if (t && /[가-힣A-Za-z0-9]/.test(t)) items.push({ page, text: t }); buf = []; };
+  const flush = () => { const t = clean(buf.join(' ')); if (t && /[\p{L}\p{N}]/u.test(t)) items.push({ page, text: t }); buf = []; };
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line || /^=+$/.test(line)) { flush(); continue; }
@@ -172,6 +176,13 @@ const srv = await bootServer({ SONIOX_API_KEY: env.SONIOX_API_KEY, OPENAI_API_KE
 let runs;
 try {
   const cookie = await loginAdmin(srv.base);
+  if (TERMS) { // --terms: 기본 시드 뒤에 붙여 저장(격리 DATA_DIR) — 세션 연결 때 Soniox context 로 들어간다(dialogue-e2e 와 같음)
+    const cur = await fetch(srv.base + '/api/terms-config', { headers: { Cookie: cookie } }).then((r) => r.json());
+    const r = await fetch(srv.base + '/api/terms-config', { method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ ...cur, entries: [...cur.entries, ...TERMS] }) });
+    if (!r.ok) throw new Error('용어 저장 실패: ' + r.status);
+    console.log(`용어 ${TERMS.length}개 추가(전체 ${(await r.json()).entries.length}개)`);
+  }
   runs = await Promise.all(parts.map((p, k) => runPart(srv.base, cookie, p, k)));
 } finally {
   await srv.stop();

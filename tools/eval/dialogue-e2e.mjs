@@ -26,6 +26,8 @@ const RATE = 24000;
 const VOICE = {
   ko: '89f4372f-1f73-4b85-8e1e-5d24ed8bc826', // Jaewon(남성)
   ja: 'd0ff6870-dd30-420d-8568-d756d806ea62', // Hinata
+  zh: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', // Jing(중국어 보통화 여성) — 앱 TTS 와 같은 목소리
+  en: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', // Skylar
 };
 const LANG_NAME = { ko: '한국어', ja: '일본어', en: '영어', zh: '중국어' };
 const GAP_S = 1.2;
