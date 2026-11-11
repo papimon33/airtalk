@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kstDay, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
-  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens,
+  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens, scriptLang,
 } from '../server/util/pipeline_util.js';
 import { agentTextFeed } from '../server/util/agent_text.js';
 
@@ -162,6 +162,15 @@ test('estimateContextTokens: Soniox 가 세는 방식(용어 문자열 + 항목�
   assert.equal(estimateContextTokens({ terms: ko }), 10 + chars + 2500);
   const actualPerTerm = 9996 / (7505 + 2500); // 실측: 한글 인식어 2,500개(7,505자) = 9,996토큰
   assert.ok(Math.abs(actualPerTerm - 1) < 0.02);
+});
+
+test('scriptLang: 글자로 원문 언어를 고른다(감수 지시문의 언어쌍)', () => {
+  assert.equal(scriptLang('退税在哪里办理？我昨天在明洞买了衣服。'), 'zh');
+  assert.equal(scriptLang('출국장 안에 있는 무인 환급기에서 택스 리펀드를 받으실 수 있습니다.'), 'ko');
+  assert.equal(scriptLang('搭乗口は3階にあります。'), 'ja');
+  assert.equal(scriptLang('Where is gate 3?'), 'en');
+  assert.equal(scriptLang('我就打开我的MacBook，Check一下Gmail。'), 'zh', '영어가 섞인 중국어');
+  assert.equal(scriptLang('이를 위해 양국은 A-CDM 정보를 공유하고 NOTAM 공유 체계를 강화합니다.'), 'ko', '영문 약어가 섞인 한국어');
 });
 
 test('termHintsFrom: 원문에 나온 등록 용어만 목표 언어 표기로 넘긴다', () => {

@@ -149,7 +149,7 @@ export function handleHost(ws) {
     }
     return rows.join('\n');
   };
-  // 확정 카드 다듬기: 비동기 nano → 카드가 살아 있고 텍스트가 그대로일 때만 덮어쓰기
+  // 확정 카드 감수(다듬기): 비동기 → 카드가 살아 있고 텍스트가 그대로일 때만 덮어쓰기
   // (그 사이 늦은 번역 꼬리가 먼저 덮었으면 양보). 응대 종료로 deskLog 에
   // 아카이브된 뒤 도착하면 기록만 조용히 갱신(뷰어 방송 불필요).
   const findItem = (id) => (session && Array.isArray(session.items) ? session.items.find((x) => x.id === id) : null);
@@ -172,7 +172,7 @@ export function handleHost(ws) {
       setTimeout(() => {
         const it = findItem(id);
         const cur = (it && it.texts && it.texts[key]) || tgt;
-        const job = translationCut(src, cur) ? retranslateText(src, key, polishCtx(key, id)) : polishText(src, cur, key, polishCtx(key, id));
+        const job = translationCut(src, cur) ? retranslateText(src, key, polishCtx(key, id), cur) : polishText(src, cur, key, polishCtx(key, id));
         job.then(applyPolish(id, key, cur)).catch(() => {});
       }, 2500);
       return;

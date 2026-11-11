@@ -194,6 +194,17 @@ export function addsNote(out, raw) {
   return n(out) > n(raw);
 }
 
+/* 글자로 본 원문 언어(감수 지시문의 언어쌍 고르기용): 가나 → ja, 한글 → ko, 한자만 → zh, 그 밖 → en */
+export function scriptLang(text) {
+  const s = String(text || '');
+  let hg = 0, kana = 0, han = 0, lat = 0;
+  for (const ch of s) { if (HANGUL.test(ch)) hg++; else if (KANA.test(ch)) kana++; else if (HAN.test(ch)) han++; else if (/[A-Za-z]/.test(ch)) lat++; }
+  if (kana >= 2 && kana + han >= hg) return 'ja';
+  if (hg && hg >= han) return 'ko';
+  if (han && han * 3 >= lat) return 'zh';
+  return 'en';
+}
+
 export function langScriptOk(out, raw, lang) {
   const s = String(out || ''), r = String(raw || '');
   if (lang !== 'ko' && HANGUL.test(s) && !HANGUL.test(r)) return false;

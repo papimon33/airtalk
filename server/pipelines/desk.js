@@ -281,7 +281,7 @@ export function runDesk(h) {
     lastCommitText = out;
     lastCommitAt = Date.now();
     upsertItem(id, { [targetKeyFor(src)]: out }, txt, null, src || null, undefined, toks, tm);
-    if (tgt) polishCommit(id, targetKeyFor(src), txt, tgt); // 번역 다듬기(nano) — 직역투 후교정
+    if (tgt) polishCommit(id, targetKeyFor(src), txt, tgt); // 번역 감수 — 직역투 후교정
   };
 
   // 앞 카드와 잡아 둔 다음 사람의 말까지 모두 확정
@@ -574,7 +574,7 @@ export function runDesk(h) {
     gLastCommitText = out;
     gLastCommitAt = Date.now();
     upsertItem(id, { [A]: out }, txt, null, lockedB || null, 'left', toks, tm);
-    if (tgt) polishCommit(id, A, txt, tgt); // 번역 다듬기(nano) — 손님 발화의 한국어 직역투 후교정
+    if (tgt) polishCommit(id, A, txt, tgt); // 번역 감수 — 손님 발화의 한국어 직역투 후교정
   };
   function onGuestMsg(raw) {
     let ev; try { ev = JSON.parse(raw.toString()); } catch { return; }

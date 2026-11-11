@@ -287,7 +287,7 @@ export function runSoniox(h) {
     upsertItem(id, { [target]: out }, txt, spkLabel(spk), src || null, undefined, toks, tm); // lang=발화 언어 — 뷰어가 내 말/상대 말 정렬
     lastCommitted = { id, key: target, out, at: Date.now(), src }; // 커밋 직후 늦게 도착하는 번역 꼬리 귀속용
     lockDetected(src); // 자동 감지: 첫 확정 발화의 언어로 힌트·용어집을 좁혀 1회 재연결
-    if (tgt) polishCommit(id, target, txt, tgt); // 번역 다듬기(nano) — 직역투 후교정(비동기 카드 교체)
+    if (tgt) polishCommit(id, target, txt, tgt); // 번역 감수 — 직역투 후교정(비동기 카드 교체)
     // 실시간 TTS: 발화 중 문장 단위로 이미 흘려보냈고, 여기선 남은 꼬리만 합성.
     //  재입력은 브라우저 AEC(마이크 경로) + 서버 에코 텍스트 필터(시스템 캡처·기기 간 경로)로 차단.
     // 출력 언어로 말한 발화는 읽어 줄 번역이 없다 — 방금 한 말을 그대로 되읽지 않는다
