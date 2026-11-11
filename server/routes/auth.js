@@ -21,7 +21,7 @@ export function registerAuthRoutes(app) {
   app.post('/api/admin/2fa/verify', requireAdmin, (req, res) => {
     if (!pending2faSecret) return res.status(400).json({ error: '먼저 2FA 설정을 시작하세요.' });
     if (!totpVerify(pending2faSecret, (req.body || {}).code)) return res.status(400).json({ error: '인증 코드가 올바르지 않습니다. 앱의 6자리 코드를 다시 확인하세요.' });
-    securityCfg.adminTotpSecret = pending2faSecret;
+    securityCfg.adminTotpSecret = pending2faSecret; // gitleaks:allow — 비밀값이 아니라 변수끼리 대입(실행 중 만든 2FA 시크릿을 설정에 옮김)
     pending2faSecret = '';
     saveSecurityCfg();
     console.log('[2fa] 관리자 2FA 활성화됨');
