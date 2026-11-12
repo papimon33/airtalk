@@ -85,7 +85,7 @@ npm test
 | 역할 | 지금 쓰는 모델 | 설정값(`server/config.js`) | 호출 코드 |
 |---|---|---|---|
 | 실시간 음성 인식 + 번역 | Soniox `stt-rt-v6` | `SONIOX_MODEL` | `server/vendors/soniox.js`(접속·용어 반영), `server/pipelines/soniox.js`(실시간 번역·양방향), `server/pipelines/desk.js`(안내데스크) |
-| 번역 감수(다듬기)·용어 검증 | OpenAI `gpt-5.4-mini` | `REFINE_MODEL` | `server/vendors/openai.js`(지시문), `server/vendors/refine_notes.js`(언어쌍별 표기 규칙), `server/routes/terms.js` |
+| 번역 감수(다듬기)·용어 검증 | OpenAI `gpt-6.1-terra` | `REFINE_MODEL` | `server/vendors/openai.js`(지시문), `server/vendors/refine_notes.js`(언어쌍별 표기 규칙), `server/routes/terms.js` |
 | 번역 음성(TTS) | Cartesia `sonic-3.5` | `CARTESIA_MODEL` | `server/vendors/cartesia.js` |
 | 단일 언어 통역(이전 방식) | OpenAI `gpt-realtime-translate` | `TRANSLATE_MODEL` | `server/pipelines/translate.js` (새 세션 화면에서는 고를 수 없음) |
 

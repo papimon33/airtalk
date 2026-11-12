@@ -13,17 +13,17 @@ import { isAckOnly, sanitizeTranslation, langScriptOk, copiesContext, addsNote, 
 /*  전사된 원문 -> 목표 언어로 번역(+다듬기) : gpt-5-mini                */
 /* ------------------------------------------------------------------ */
 
-// 모델별 reasoning_effort: gpt-5.4+ 는 'minimal' 미지원(none/low/…) → 'none',
+// 모델별 reasoning_effort: gpt-5.4+·gpt-6 계열은 'minimal' 미지원(none/low/…) → 'none',
 // 구형 gpt-5(nano/mini)는 'minimal'. 그 외 모델은 미설정.
 export function reasoningEffort(model) {
-  if (/^gpt-5\.\d/.test(model)) return 'none';
+  if (/^gpt-(5\.\d|[6-9])/.test(model)) return 'none'; // gpt-5.4·gpt-6 계열: 추론 끔(안 보내면 기본 추론이 켜져 느리고 토큰 한도를 먹는다)
   if (/^gpt-5/.test(model)) return 'minimal';
   return null;
 }
 
 /* ---- 번역 감수(다듬기): Soniox 기계 번역을 원문 기준으로 고쳐 쓴다 ----
    카드 확정(기계 번역 즉시 표시) → 비동기 감수 → 같은 id 카드 덮어쓰기. 실패·무변경이면 null(기계 번역 유지).
-   2026-11-11 '자연스럽게 다듬기(nano)' → '원문 기준 감수(gpt-5.4-mini)'로 바꿈: 다듬기는 기계 번역을 믿고 말투만 고쳐
+   2026-11-11 '자연스럽게 다듬기(nano)' → '원문 기준 감수'로 바꿈(모델은 config.js REFINE_MODEL): 다듬기는 기계 번역을 믿고 말투만 고쳐
    오역(东海→동해, 艺人→예술가, 抱大腿 직역 등)이 그대로 남았다. 중국어 시험(카드 90개, GPT-5.5 MQM 채점)에서
    중대 오류 70 → 8건, 중대 오류 없는 카드 61% → 92%. 모델 차이가 지시문 차이보다 컸다(같은 지시문 nano 59건).
    언어쌍별 표기 규칙은 refine_notes.js, 원문에 나온 등록 용어는 [용어]로 함께 준다(엔진이 용어집을 안 따를 때 대비).

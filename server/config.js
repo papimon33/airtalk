@@ -20,9 +20,9 @@ export const PORT = Number(process.env.PORT || 3000);
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // 모델은 코드 고정(환경변수로 안 받음). 바꾸려면 여기서 직접 수정.
 export const TRANSLATE_MODEL = 'gpt-realtime-translate';
-// 번역 감수(다듬기)·끊긴 번역 다시 번역·용어 검증. 2026-11-11 중국어 시험(카드 90개, 중대 오류 수 / 평균 응답):
-//   gpt-5-nano 59건·1.6초, gpt-5.4-nano 37건·1.3초, gpt-5-mini 34건·1.7초, gpt-5.4-mini 8건·1.0초, gpt-5.5 3건·2.1초(단가 약 6.7배)
-export const REFINE_MODEL = 'gpt-5.4-mini';
+// 번역 감수(다듬기)·끊긴 번역 다시 번역·용어 검증. 2026-11-11~12 중국어 시험(카드 88~90개, 중대 오류 수 / 원어민 눈에 띄는 카드 / 응답 중앙값):
+//   gpt-5-nano 59건, gpt-5.4-nano 37건, gpt-5-mini 34건, gpt-6-luna 10건·15%·1.5초, gpt-5.4-mini 8건·32%·1.3초, gpt-6.1-terra 3건·9%·1.7초
+export const REFINE_MODEL = 'gpt-6.1-terra';
 export const TARGET_LANG = process.env.TARGET_LANG || 'ko';
 // 세션당 저장 문장(items) 상한 — 장시간 세션이 무한히 커져 메모리·문서를 압박하는 것을 막는다.
 // 초과 시 가장 오래된 문장부터 버린다(화면 히스토리만 잘림, 데스크 응대 기록 deskLog·통계는
