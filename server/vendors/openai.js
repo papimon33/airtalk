@@ -1,6 +1,6 @@
 /* OpenAI(chat completions) — 번역 다듬기(polish)·번역·띄어쓰기 교정 */
 import { OPENAI_API_KEY, REFINE_MODEL, REFINE_MODELS, LANG_NAMES } from '../config.js';
-import { REFINE_NOTES } from './refine_notes.js';
+import { REFINE_NOTES, REFINE_LANG_NAMES } from './refine_notes.js';
 import { termsConfig, appSettings } from '../store/index.js';
 import { isAckOnly, sanitizeTranslation, langScriptOk, copiesContext, addsNote, translationCut, termHintsFrom, scriptLang } from '../util/pipeline_util.js';
 
@@ -29,12 +29,13 @@ export function reasoningEffort(model) {
    언어쌍별 표기 규칙은 refine_notes.js, 원문에 나온 등록 용어는 [용어]로 함께 준다(엔진이 용어집을 안 따를 때 대비).
    TTS 는 이미 재생된 뒤라 자막/기록만 바뀐다(의도). context(직전 대화)는 단답·조각 문장의 맥락용. */
 const POLISH_MAX_CHARS = 1500;
-const langLabel = (lg) => (lg === 'zh' ? '중국어 간체(简体中文)' : LANG_NAMES[lg] || lg);
+const langName = (lg) => REFINE_LANG_NAMES[lg] || LANG_NAMES[lg] || '';
+const langLabel = (lg) => (lg === 'zh' ? '중국어 간체(简体中文)' : langName(lg) || lg);
 // 시스템 지시문은 언어쌍마다 고정(용어·맥락은 사용자 메시지) — 같은 앞부분이 반복돼 입력 캐시 할인을 받는다
 function refineSystem(from, to) {
   const notes = REFINE_NOTES[`${from}>${to}`] || [];
   const tl = langLabel(to);
-  return `너는 ${LANG_NAMES[from] || '외국어'}→${tl} 전문 동시통역사이자 번역 감수자다. [원문]은 실시간 음성 인식 결과이고, [기계 번역]은 엔진이 만든 초벌 번역이다. [원문]의 뜻을 정확하고 자연스러운 ${tl}로 옮긴 최종 번역문을 써라.
+  return `너는 ${langName(from) || '외국어'}→${tl} 전문 동시통역사이자 번역 감수자다. [원문]은 실시간 음성 인식 결과이고, [기계 번역]은 엔진이 만든 초벌 번역이다. [원문]의 뜻을 정확하고 자연스러운 ${tl}로 옮긴 최종 번역문을 써라.
 규칙
 1. 정확성이 먼저다. [기계 번역]이 원문과 다르면(오역·누락·추가·뜻이 통하지 않는 직역) 그 부분을 원문에 맞게 고친다.
 2. 원문에 없는 내용을 넣지 않고, 있는 내용을 빼지 않는다. 나열된 이름·숫자·날짜는 모두 옮긴다.
@@ -52,7 +53,7 @@ const refineUser = (src, mt, tgtLang, context) => {
   return `[직전 대화]\n${(context || '(없음)').slice(0, 600)}\n${hints.length ? '\n[용어] ' + hints.join(' / ') + '\n' : ''}\n[원문] ${src}\n[기계 번역] ${mt}`;
 };
 // 평가 도구용: 다른 모델로 같은 지시문을 시험할 때 쓴다(tools/eval)
-export const refinePrompt = (src, mt, tgtLang, context) => ({ sys: refineSystem(scriptLang(src), tgtLang), user: refineUser(src, mt, tgtLang, context) });
+export const refinePrompt = (src, mt, tgtLang, context, srcLang) => ({ sys: refineSystem(srcLang || scriptLang(src), tgtLang), user: refineUser(src, mt, tgtLang, context) });
 // 지금 쓰는 감수 모델: 관리자가 고른 모델(허용 목록 안) 또는 기본값
 export const currentRefineModel = () => (REFINE_MODELS.some((m) => m.id === appSettings.refineModel) ? appSettings.refineModel : REFINE_MODEL);
 async function refineCall(sys, user, maxTokens) {
@@ -70,7 +71,8 @@ async function refineCall(sys, user, maxTokens) {
   if (d?.choices?.[0]?.finish_reason === 'length') return null; // 토큰 한도로 끊긴 결과 — 쓰면 뒷부분을 잃는다
   return sanitizeTranslation((d?.choices?.[0]?.message?.content || '').trim()) || null;
 }
-export async function polishText(src, tgt, tgtLang, context) {
+// srcLang: 발화 언어(엔진 판정). 없으면 글자로 어림한다
+export async function polishText(src, tgt, tgtLang, context, srcLang) {
   if (!OPENAI_API_KEY) return null;
   const t = String(tgt || '').trim();
   const s = String(src || '').trim();
@@ -79,7 +81,7 @@ export async function polishText(src, tgt, tgtLang, context) {
   if (t.length > POLISH_MAX_CHARS || s.length > POLISH_MAX_CHARS * 2) return null;
   try {
     // 번역 길이에 맞춘다(한중일은 글자당 1~2토큰). 고정값이면 긴 카드가 중간에 끊긴다
-    const out = await refineCall(refineSystem(scriptLang(s), tgtLang), refineUser(s, t, tgtLang, context), Math.max(400, t.length * 4));
+    const out = await refineCall(refineSystem(srcLang || scriptLang(s), tgtLang), refineUser(s, t, tgtLang, context), Math.max(400, t.length * 4));
     if (!out || out === t) return null;
     if (out.length > t.length * 3 + 20) return null;      // 폭주(해설 섞임)
     if (translationCut(s, out)) return null;              // 원문에 비해 내용이 크게 빠짐
@@ -95,11 +97,11 @@ export async function polishText(src, tgt, tgtLang, context) {
 /* ---- 다시 번역: 엔진 번역이 중간에 끊긴 카드(translationCut)는 끊긴 번역을 참고만 하고 원문 전체를 새로 옮긴다 ----
    지명을 길게 나열하면 Soniox 번역이 '…마닐라,'에서 멈춘다(2026-11-11, 엔진 원본 메시지로 확인). 감수와 같은 지시문·모델을 쓴다.
    결과가 목표 언어가 아니거나 여전히 끊겨 있으면 null(엔진 번역 유지). */
-export async function retranslateText(src, tgtLang, context, cutMt) {
+export async function retranslateText(src, tgtLang, context, cutMt, srcLang) {
   if (!OPENAI_API_KEY) return null;
   const s = String(src || '').trim();
   if (!s || s.length > POLISH_MAX_CHARS * 2) return null;
-  const sys = refineSystem(scriptLang(s), tgtLang);
+  const sys = refineSystem(srcLang || scriptLang(s), tgtLang);
   const user = refineUser(s, `${String(cutMt || '').trim() || '(없음)'} …(엔진 번역이 여기서 끊김 — 원문 전체를 빠짐없이 옮길 것)`, tgtLang, context);
   for (let k = 0; k < 2; k++) { // 검사에서 떨어지면 한 번 더
     try {

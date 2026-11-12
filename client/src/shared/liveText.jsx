@@ -13,6 +13,7 @@ const CSS = `
 .at-chg { animation: at-chg 2.4s ease-out both; border-radius: 4px; -webkit-box-decoration-break: clone; box-decoration-break: clone }
 .at-src1 { display: flex; justify-content: flex-end; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px) }
 .at-src1 > span { flex: none; min-width: 100% }
+.at-src1.at-rtl { -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px); mask-image: linear-gradient(to left, transparent 0, #000 28px) }
 @media (prefers-reduced-motion: reduce) { .at-in, .at-swap, .at-chg { animation: none } }
 `;
 if (typeof document !== 'undefined' && !document.getElementById('at-live-css')) {
@@ -60,7 +61,7 @@ export function LiveText({ text, draft, sx, ...rest }) {
   let body = cur;
   if (v && v.mode === 'append') body = <>{v.base}<span key={cur.length} className="at-in">{v.add}</span></>;
   else if (v && v.mode === 'swap') body = <span key={v.key} className="at-swap">{v.segs.map((s, i) => (s.c ? <span key={i} className="at-chg">{s.t}</span> : s.t))}</span>;
-  return <Typography sx={{ transition: 'color .25s', ...sx }} {...rest}>{body}</Typography>;
+  return <Typography dir="auto" sx={{ transition: 'color .25s', ...sx }} {...rest}>{body}</Typography>;
 }
 
 /* 맨 아래 붙어 보기 — 줄이 늘 때 화면이 뚝 밀리지 않게 조금씩 따라 내려간다.
@@ -94,10 +95,15 @@ export function srcDraftMode() {
     return v === 'hide' || v === 'full' ? v : 'line';
   } catch { return 'line'; }
 }
+const RTL_RE = /[\u0590-\u08FF\uFB1D-\uFEFC]/; // 히브리·아랍 글자
 // 원문 줄: 진행 중에는 끝부분만 한 줄로(확정되면 전체). 비교용 설정이면 숨기거나 전체로
 export function SourceLine({ text, draft, sx, ...rest }) {
   const mode = draft ? srcDraftMode() : 'full';
   if (mode === 'hide') return null;
-  if (mode === 'line') return <Typography className="at-src1" sx={sx} {...rest}><span>{text}</span></Typography>;
-  return <Typography sx={sx} {...rest}>{text}</Typography>;
+  if (mode === 'line') {
+    // 아랍어·히브리어는 오른쪽에서 왼쪽으로 쓴다 — 방향을 알려 줘야 '끝부분'(왼쪽)이 보인다(안 그러면 첫머리만 보여 멈춘 것처럼 보였다)
+    const rtl = RTL_RE.test(String(text || ''));
+    return <Typography className={rtl ? 'at-src1 at-rtl' : 'at-src1'} dir={rtl ? 'rtl' : undefined} sx={sx} {...rest}><span>{text}</span></Typography>;
+  }
+  return <Typography dir="auto" sx={sx} {...rest}>{text}</Typography>; // dir=auto: 아랍어 원문은 오른쪽 정렬·부호 자리가 맞게(뷰어와 같다)
 }

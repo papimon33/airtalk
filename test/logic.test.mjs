@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kstDay, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
-  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens, scriptLang, endpointOptions,
+  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens, scriptLang, endpointOptions, endsSentence,
 } from '../server/util/pipeline_util.js';
 import { agentTextFeed } from '../server/util/agent_text.js';
 
@@ -171,6 +171,25 @@ test('endpointOptions: 화면이 값을 안 보내면 문서 기본값(최대 �
   assert.deepEqual(endpointOptions('0.5', '900', '2'), { endpoint_sensitivity: 0.5, max_endpoint_delay_ms: 900, endpoint_latency_adjustment_level: 2 });
   assert.equal(endpointOptions('0', '100', '9').max_endpoint_delay_ms, 500, '보낸 값은 허용 범위로');
   assert.equal(endpointOptions('x', 'y', 'z').max_endpoint_delay_ms, 2000);
+});
+
+test('아랍어 등 다른 문자: 분량 검사가 0 으로 세지 않고, 문장 끝 부호를 알아본다', () => {
+  // 2026-11-12: 아랍 글자 무게가 0 이라 아랍어 카드는 영영 나뉘지 않았고, 아랍어·러시아어로 옮긴 감수는 늘 '끊김'으로 버려졌다
+  const ar = 'ما أبرز التقنيات العسكرية المدعومة بالذكاء الاصطناعي التي يستخدمها الجيش في الحرب؟ هذا ما سنعرفه في هذا التقرير.';
+  const ko = '전쟁에서 군이 사용하는 인공지능 기반 군사 기술 가운데 두드러진 것은 무엇일까요? 이번 보도에서 알아보겠습니다.';
+  assert.equal(translationCut(ar, ko), false, '아랍어 → 한국어 정상 번역');
+  assert.equal(translationCut(ko, ar), false, '한국어 → 아랍어 정상 번역');
+  assert.equal(translationCut(ar, '전쟁에서 군이 사용하는,'), true, '끊긴 번역은 여전히 잡는다');
+  const ru = 'Какие военные технологии на основе искусственного интеллекта использует армия во время войны? Об этом наш репортаж.';
+  assert.equal(translationCut(ko, ru), false, '한국어 → 러시아어');
+  const th = 'กองทัพใช้เทคโนโลยีทางทหารที่ขับเคลื่อนด้วยปัญญาประดิษฐ์อะไรบ้างในสงคราม รายงานนี้จะพาไปดู';
+  assert.equal(translationCut(ko, th), false, '한국어 → 태국어');
+  assert.equal(endsSentence('ما أبرز التقنيات؟'), true, '아랍어 물음표');
+  assert.equal(endsSentence('هذا ما سنعرفه.'), true);
+  assert.equal(endsSentence('هذا ما سنعرفه،'), false, '아랍어 쉼표는 문장 끝이 아니다');
+  assert.equal(scriptLang(ar), 'ar');
+  assert.equal(scriptLang(ru), 'ru');
+  assert.equal(scriptLang(th), 'th');
 });
 
 test('scriptLang: 글자로 원문 언어를 고른다(감수 지시문의 언어쌍)', () => {

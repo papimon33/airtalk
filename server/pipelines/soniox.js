@@ -117,6 +117,8 @@ export function runSoniox(h) {
   let heldId = null;       // 잡아 둔 말을 보여 주는 진행 중 카드
   let flipStarted = false; // 지금 카드가 잡아 둔 말에서 시작됐는지
   let transSrcLen = 0;     // 확정 번역이 옮긴 원문 길이(finalText 기준) — 긴 카드를 문장 끝에서 나눌 자리
+  let midSplit = false;    // commitHead 가 말하는 도중에 확정하는 중(언어 잠금 재연결을 미룬다)
+  let deferLock = '';      // 미뤄 둔 언어 잠금(말하는 도중 나눈 카드의 언어)
   let carryTimer = null;   // <end> 에 끊긴 짧은 첫마디: 말이 이어지면 합치고, 없으면 잠시 뒤 확정
   let carrying = false;
   let lastCommitAt = 0;    // 직전 확정 시각 — 중복 판정은 5초 창 안에서만
@@ -260,7 +262,8 @@ export function runSoniox(h) {
     const tailToks = srcToks.slice(k);
     const keepSrc = curSrc, keepSpk = curSpeaker;
     finalText = finalText.slice(0, cut); srcToks = srcToks.slice(0, k);
-    commit();
+    midSplit = true;
+    try { commit(); } finally { midSplit = false; }
     if (tailText) { finalText = tailText; srcToks = tailToks; curSrc = keepSrc; curSpeaker = keepSpk; } // 새 카드 id 는 다음 응답에서 붙는다
   };
   // 현재 누적분을 한 문장으로 확정 (GPT 호출 없음)
@@ -293,7 +296,8 @@ export function runSoniox(h) {
     const target = targetKeyFor(src);
     upsertItem(id, { [target]: out }, txt, spkLabel(spk), src || null, undefined, toks, tm); // lang=발화 언어 — 뷰어가 내 말/상대 말 정렬
     lastCommitted = { id, key: target, out, at: Date.now(), src }; // 커밋 직후 늦게 도착하는 번역 꼬리 귀속용
-    lockDetected(src); // 자동 감지: 첫 확정 발화의 언어로 힌트·용어집을 좁혀 1회 재연결
+    // 자동 감지: 첫 확정 발화의 언어로 힌트·용어집을 좁혀 1회 재연결. 말하는 중에 나눈 카드에서는 미뤘다가(재연결하면 그 사이 음성을 잃는다) 다음 <end>(말이 쉬는 곳)에서 한다
+    if (midSplit) deferLock = deferLock || src; else lockDetected(src);
     if (tgt) polishCommit(id, target, txt, tgt); // 번역 감수 — 직역투 후교정(비동기 카드 교체)
     // 실시간 TTS: 발화 중 문장 단위로 이미 흘려보냈고, 여기선 남은 꼬리만 합성.
     //  재입력은 브라우저 AEC(마이크 경로) + 서버 에코 텍스트 필터(시스템 캡처·기기 간 경로)로 차단.
@@ -431,13 +435,17 @@ export function runSoniox(h) {
       if (flipStarted && speechWeight(finalText) < CARRY_MAX) {
         carrying = true;
         carryTimer = setTimeout(() => { carryTimer = null; if (curId && finalText.trim()) commit(); }, CARRY_MS);
-      } else commit();
-    } else if (sawFinalTrans && (sxMode === 'two' || inLang || lockedIn) && !hold.active() && !carrying) {
+      } else {
+        commit();
+        if (deferLock) { const l = deferLock; deferLock = ''; lockDetected(l); } // 미뤄 둔 언어 잠금 — 이미 잠겼으면 아무 일도 없다
+      }
+    } else if (sawFinalTrans && !hold.active() && !carrying) {
       // 쉬지 않고 이어 말하면 <end> 가 오지 않아 카드가 한없이 길어진다(v6 발표 테스트 최대 760자, 브이로그 24초·330자) —
       // 번역이 문장을 끝낼 때마다 거기까지를 확정하고, 그 뒤에 확정된 원문(다음 문장 앞머리)은 새 카드로 넘긴다.
       // 짝 맞추기: 엔진은 '확정 원문 덩어리 → 그 번역 덩어리'를 번갈아 보낸다(2026-11-12 원본 메시지로 확인) —
       // 번역 확정 토큰이 온 순간의 원문 길이(transSrcLen)까지가 지금 번역의 원문이다. 분량이 크게 어긋나면 나누지 않는다.
-      // 자동 감지 세션은 언어가 잠긴 뒤에만: 첫 확정에서 재연결하므로 말하는 도중 끊으면 그 사이 음성을 잃는다.
+      // 자동 감지 세션도 나눈다(이전엔 언어가 잠긴 뒤에만 — 쉬지 않는 영상은 첫 <end> 까지 108초·1,036자가 한 카드였다).
+      // 대신 말하는 도중에 나눈 카드에서는 언어 잠금(재연결)을 하지 않고, 다음 <end> 확정 때 한다.
       const head = finalText.slice(0, transSrcLen);
       if (transSrcLen > 0 && endsSentence(finalTrans) && endsSentence(head) && Math.max(speechWeight(head), speechWeight(finalTrans)) >= SPLIT_MIN
         && !translationCut(head, finalTrans) && !translationCut(finalTrans, head)) commitHead(transSrcLen);

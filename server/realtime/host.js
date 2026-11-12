@@ -172,12 +172,12 @@ export function handleHost(ws) {
       setTimeout(() => {
         const it = findItem(id);
         const cur = (it && it.texts && it.texts[key]) || tgt;
-        const job = translationCut(src, cur) ? retranslateText(src, key, polishCtx(key, id), cur) : polishText(src, cur, key, polishCtx(key, id));
+        const job = translationCut(src, cur) ? retranslateText(src, key, polishCtx(key, id), cur, it && it.lang) : polishText(src, cur, key, polishCtx(key, id), it && it.lang);
         job.then(applyPolish(id, key, cur)).catch(() => {});
       }, 2500);
       return;
     }
-    polishText(src, tgt, key, polishCtx(key, id)).then(applyPolish(id, key, tgt)).catch(() => {});
+    polishText(src, tgt, key, polishCtx(key, id), (findItem(id) || {}).lang).then(applyPolish(id, key, tgt)).catch(() => {});
   };
 
   // 파이프라인 모듈에 넘기는 연결 컨텍스트 — 구 server.js 에선 run*() 이 handleHost 안의 중첩 함수로 이 값들을 클로저로 공유했다

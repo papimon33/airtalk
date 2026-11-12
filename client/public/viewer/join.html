@@ -52,6 +52,7 @@
   /* 진행 중인 카드의 원문은 끝부분만 한 줄로(확정되면 전체) */
   .msg .src.src1 { justify-content:flex-end; overflow:hidden; white-space:nowrap; -webkit-mask-image:linear-gradient(to right, transparent 0, #000 28px); mask-image:linear-gradient(to right, transparent 0, #000 28px); }
   .msg .src.src1 > span { flex:none; min-width:100%; }
+  .msg .src.src1.rtl { -webkit-mask-image:linear-gradient(to left, transparent 0, #000 28px); mask-image:linear-gradient(to left, transparent 0, #000 28px); } /* 아랍어·히브리어: 끝부분이 왼쪽 */
   @media (prefers-reduced-motion: reduce) { .at-in, .at-swap, .at-chg { animation:none; } }
   .msg .src { font-size:calc(14.5px * var(--k)); color:var(--muted); line-height:1.5; margin-top:5px; overflow-wrap:anywhere; }
   .msg .line[lang|="ko"], .msg .src[lang|="ko"] { word-break:keep-all; }
@@ -371,6 +372,9 @@ function srcShown(c){
 function setSrc(c, text){
   const one = !!c.draft && SRC_DRAFT === 'line';
   c.src.classList.toggle('src1', one);
+  const rtl = one && /[\u0590-\u08FF\uFB1D-\uFEFC]/.test(text); // 오른쪽에서 왼쪽으로 쓰는 글은 방향을 정해 줘야 끝부분(왼쪽)이 보인다
+  c.src.classList.toggle('rtl', rtl);
+  c.src.dir = rtl ? 'rtl' : 'auto';
   if (one) { c.src.textContent = ''; const sp = document.createElement('span'); sp.textContent = text; c.src.appendChild(sp); }
   else c.src.textContent = text;
 }

@@ -98,7 +98,8 @@ export function termsKept(out, raw, terms) {
 /* 엔진 번역이 중간에 끊겼나 — 지명을 길게 나열하면 Soniox 번역이 '…마닐라,'에서 멈추고 문장 끝(<end>)이 온다
    (2026-11-11 지명 시험, 엔진 원본 메시지로 확인: 원문은 끝까지 인식됐는데 확정 번역 조각이 더 오지 않았다).
    원문은 문장이 끝났는데 번역이 쉼표로 끝나거나, 번역 분량이 원문의 45% 미만이면 끊긴 것으로 본다.
-   분량은 글자 종류별 가중(한자 1.5·한글 1·가나 0.8·로마자 0.35·숫자 0.5)으로 언어 차이를 맞춘다. 짧은 발화는 따지지 않는다. */
+   분량은 글자 종류별 가중(한자 1.5·한글 1·가나 0.8·로마자·키릴 0.35·그 밖의 글자 0.55·숫자 0.5)으로 언어 차이를 맞춘다. 짧은 발화는 따지지 않는다.
+   (2026-11-12: 아랍 글자를 0 으로 세어 아랍어 카드가 108초·1,036자 동안 나뉘지 않았고, 아랍어·러시아어·태국어로 옮긴 감수 결과는 늘 버려졌다) */
 const weightOf = (s) => {
   let w = 0;
   for (const ch of String(s || '')) {
@@ -107,6 +108,8 @@ const weightOf = (s) => {
     else if (KANA.test(ch)) w += 0.8;
     else if (/[A-Za-z]/.test(ch)) w += 0.35;
     else if (/[0-9]/.test(ch)) w += 0.5;
+    else if (/[\u0400-\u052F\u0370-\u03FF\u00C0-\u024F\u1E00-\u1EFF]/.test(ch)) w += 0.35; // 키릴·그리스·악센트 붙은 라틴(베트남어 등)
+    else if (/\p{L}/u.test(ch)) w += 0.55; // 그 밖의 글자(아랍·히브리·태국·데바나가리 등) — 0 으로 세면 분량 검사가 늘 어긋난다
   }
   return w;
 };
@@ -194,14 +197,20 @@ export function addsNote(out, raw) {
   return n(out) > n(raw);
 }
 
-/* 글자로 본 원문 언어(감수 지시문의 언어쌍 고르기용): 가나 → ja, 한글 → ko, 한자만 → zh, 그 밖 → en */
+/* 글자로 본 원문 언어 — 발화 언어를 모를 때만 쓰는 어림(감수 지시문의 언어쌍 고르기용):
+   가나 → ja, 한글 → ko, 한자만 → zh, 아랍 글자 → ar, 키릴 → ru, 태국 글자 → th, 그 밖 → en */
 export function scriptLang(text) {
   const s = String(text || '');
-  let hg = 0, kana = 0, han = 0, lat = 0;
-  for (const ch of s) { if (HANGUL.test(ch)) hg++; else if (KANA.test(ch)) kana++; else if (HAN.test(ch)) han++; else if (/[A-Za-z]/.test(ch)) lat++; }
+  let hg = 0, kana = 0, han = 0, lat = 0, ar = 0, cy = 0, th = 0;
+  for (const ch of s) {
+    if (HANGUL.test(ch)) hg++; else if (KANA.test(ch)) kana++; else if (HAN.test(ch)) han++; else if (/[A-Za-z]/.test(ch)) lat++;
+    else if (/[\u0600-\u06FF\u0750-\u077F]/.test(ch)) ar++; else if (/[\u0400-\u04FF]/.test(ch)) cy++; else if (/[\u0E00-\u0E7F]/.test(ch)) th++;
+  }
   if (kana >= 2 && kana + han >= hg) return 'ja';
   if (hg && hg >= han) return 'ko';
   if (han && han * 3 >= lat) return 'zh';
+  const top = Math.max(ar, cy, th);
+  if (top && top * 2 >= lat) return ar === top ? 'ar' : cy === top ? 'ru' : 'th';
   return 'en';
 }
 
@@ -304,9 +313,10 @@ export const speechWeight = (s) => {
   for (const c of String(s || '').match(/[\p{L}\p{N}]/gu) || []) w += c.charCodeAt(0) < 128 ? 0.4 : 1;
   return w;
 };
-const SENT_END_RE = /[.!?。！？…]["'”’)\]]*\s*$/;
+// 문장 끝 부호: 라틴·한중일 + 아랍어(\u061F)·우르두어(\u06D4)·힌디어(\u0964)
+const SENT_END_RE = /[.!?。！？…\u061F\u06D4\u0964]["'”’)\]]*\s*$/;
 export const endsSentence = (s) => SENT_END_RE.test(String(s || ''));
-export const stripSentenceEnd = (s) => String(s || '').replace(/[.!?。！？…]+\s*$/, '');
+export const stripSentenceEnd = (s) => String(s || '').replace(/[.!?。！？…\u061F\u06D4\u0964]+\s*$/, '');
 
 /* 엔진 끊김 설정(endpoint) — 값이 없으면 문서 기본값(민감도 0, 최대 지연 2000ms, 지연 레벨 0).
    화면이 이 값을 보내지 않게 된 뒤(2026-11-08) Number(null)=0 이 '0ms → 최솟값 500ms'로 들어가, 잠깐만 멈춰도
