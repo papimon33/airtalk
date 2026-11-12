@@ -159,20 +159,22 @@ test('앞 카드가 나뉜 뒤 늦게 온 번역 꼬리는 앞 카드로 간다'
 });
 
 const LONG_KO = '데이터 플랫폼 포털을 통하여 백팔 종의 데이터 융복합 서비스를 제공하고 있으며 이를 바탕으로 공항 운영 전반의 업무 효율을 높이고 있고 앞으로도 전사적인 활용을 위해 계속 노력하겠습니다. 또한 직원 교육과 내부 공모전을 함께 진행하여 실제 현장의 활용 사례를 직접 발굴하고 그 결과를 전사에 공유하겠습니다.';
+// LONG_KO 의 번역(분량이 맞아야 나눈다 — 번역이 원문에 비해 터무니없이 짧으면 끊긴 번역으로 보고 나누지 않는다)
+const LONG_ZH = '我们通过数据平台门户提供一百零八种数据融合服务，并以此提高机场运营整体的工作效率，今后也将为全公司的应用继续努力。此外，我们还将同时开展员工培训和内部征集活动，直接发掘实际现场的应用案例，并把结果分享给全公司。';
 
 test('쉬지 않고 이어 말하면 긴 카드는 문장 끝에서 나뉜다(번역이 따라온 뒤)', { timeout: 60000 }, async (t) => {
   const { c, items, cards } = await setup(t, { query: 'sxMode=one&sxTarget=zh&in=ko', preset: 'oneway', inLang: 'ko' });
   c.sendTokens([src(LONG_KO, 'ko')]);
   await wait(300);
   assert.equal((await items()).length, 0, '번역이 오기 전에는 나누지 않는다');
-  c.sendTokens([tr('通过数据平台门户提供一百零八种数据融合服务。', 'ko', 'zh')]);
+  c.sendTokens([tr(LONG_ZH, 'ko', 'zh')]);
   await until(async () => (await items()).length === 1, { timeout: 6000, desc: '문장 끝에서 확정' });
   c.sendTokens([src('다음입니다.', 'ko')]);
   c.sendTokens([tr('下一个。', 'ko', 'zh')]);
   c.end();
   const [a, b] = await cards(2);
   assert.equal(a.source, LONG_KO);
-  assert.equal(a.texts.zh, '通过数据平台门户提供一百零八种数据融合服务。');
+  assert.equal(a.texts.zh, LONG_ZH);
   assert.equal(b.source, '다음입니다.');
 });
 

@@ -35,6 +35,7 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const USAGE_FILE = path.join(DATA_DIR, 'usage.json');
 const USAGE_HOURLY_FILE = path.join(DATA_DIR, 'usage_hourly.json');
 const TERMS_FILE = path.join(DATA_DIR, 'terms_config.json'); // 고유명사/번역 설정(전역, Soniox context)
+const APP_SETTINGS_FILE = path.join(DATA_DIR, 'app_settings.json'); // 앱 설정(감수 모델 등)
 const VENDOR_USAGE_FILE = path.join(DATA_DIR, 'vendor_usage.json'); // 벤더 실사용량 일별 누적(무기한 보관)
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json'); // 사용자별 프로필(이메일·환경설정) — 관리자(가상 사용자)도 포함
 
@@ -47,6 +48,8 @@ export let usageHourly = {}; // { 'YYYY-MM-DDTHH': { whisperMs, translateMs } } 
 export let vendorUsage = { soniox: {}, cartesia: {}, openai: {}, cartesiaSelf: {} }; // cartesiaSelf: 파이프라인별 자체 집계(벤더 API 는 태그 미지원)
 // 전역 고유명사/번역 설정 — 세션(Soniox) 연결 시 context로 주입. 관리자만 수정, 전원 열람.
 export let termsConfig = { version: 3, servedLangs: [], categoryScope: {}, entries: [], updatedAt: 0 };
+// 관리자 화면에서 바꾸는 앱 설정(재시작·재배포 뒤에도 유지) — refineModel: 번역 감수 모델('' 이면 config.js 기본값)
+export let appSettings = { refineModel: '' };
 // 사용자 프로필: userId -> { id, email, prefs, updatedAt }. users 와 분리한 이유 — 관리자는 env 기반 가상 사용자라
 // users 에 없지만 이메일·환경설정(폰 앱 계정 화면)은 저장돼야 한다. Map 인 이유: id 가 '__proto__' 여도 안전.
 export let profiles = new Map();
@@ -93,6 +96,8 @@ export async function loadStore() {
         hrows.forEach((r) => (usageHourly[r.hour] = { whisperMs: r.whisperMs || 0, translateMs: r.translateMs || 0 }));
         const tc = await termsConfigCol.findOne({ _id: 'singleton' });
         if (tc) { const { _id, ...rest } = tc; termsConfig = { ...rest, updatedAt: tc.updatedAt || 0 }; } // 전체 보존(entries/servedLangs/categoryScope), 구형은 부팅 마이그레이션
+        const as = await termsConfigCol.findOne({ _id: 'appSettings' }); // 같은 컬렉션의 다른 문서(용어 설정은 'singleton')
+        if (as) { const { _id, ...rest } = as; appSettings = { ...appSettings, ...rest }; }
         const vu = await vendorUsageCol.findOne({ _id: 'singleton' });
         if (vu) vendorUsage = { soniox: vu.soniox || {}, cartesia: vu.cartesia || {}, openai: vu.openai || {}, cartesiaSelf: vu.cartesiaSelf || {} };
         profiles = new Map((await profilesCol.find({}, { projection: { _id: 0 } }).toArray()).filter((p) => p && p.id).map((p) => [p.id, p]));
@@ -131,6 +136,7 @@ export async function loadStore() {
   loadFile(USAGE_FILE, (v) => { if (v && typeof v === 'object') usageDaily = v; });
   loadFile(USAGE_HOURLY_FILE, (v) => { if (v && typeof v === 'object') usageHourly = v; });
   loadFile(TERMS_FILE, (v) => { if (v && typeof v === 'object') termsConfig = { ...v, updatedAt: v.updatedAt || 0 }; }); // 전체 보존, 구형은 부팅 마이그레이션
+  loadFile(APP_SETTINGS_FILE, (v) => { if (v && typeof v === 'object' && !Array.isArray(v)) appSettings = { ...appSettings, ...v }; });
   loadFile(VENDOR_USAGE_FILE, (v) => { if (v && typeof v === 'object') vendorUsage = { soniox: v.soniox || {}, cartesia: v.cartesia || {}, openai: v.openai || {}, cartesiaSelf: v.cartesiaSelf || {} }; });
   loadFile(PROFILES_FILE, (v) => { if (Array.isArray(v)) profiles = new Map(v.filter((p) => p && p.id).map((p) => [p.id, p])); });
 }
@@ -329,6 +335,13 @@ export async function persistTermsConfig() {
   } else {
     writeDataFile(TERMS_FILE, JSON.stringify(termsConfig, null, 2));
   }
+}
+
+/* ---- 앱 설정 저장(관리자 화면) ---- */
+export async function saveAppSettings(patch) {
+  appSettings = { ...appSettings, ...patch };
+  if (termsConfigCol) await termsConfigCol.replaceOne({ _id: 'appSettings' }, { _id: 'appSettings', ...appSettings }, { upsert: true });
+  else writeDataFile(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
 }
 
 // 사용자별 사용 시간 누적(호스트 연결 종료 시 — realtime/host.js)

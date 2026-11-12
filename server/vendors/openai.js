@@ -1,7 +1,7 @@
 /* OpenAI(chat completions) — 번역 다듬기(polish)·번역·띄어쓰기 교정 */
-import { OPENAI_API_KEY, REFINE_MODEL, LANG_NAMES } from '../config.js';
+import { OPENAI_API_KEY, REFINE_MODEL, REFINE_MODELS, LANG_NAMES } from '../config.js';
 import { REFINE_NOTES } from './refine_notes.js';
-import { termsConfig } from '../store/index.js';
+import { termsConfig, appSettings } from '../store/index.js';
 import { isAckOnly, sanitizeTranslation, langScriptOk, copiesContext, addsNote, translationCut, termHintsFrom, scriptLang } from '../util/pipeline_util.js';
 
 /* ------------------------------------------------------------------ */
@@ -36,12 +36,12 @@ function refineSystem(from, to) {
   const tl = langLabel(to);
   return `너는 ${LANG_NAMES[from] || '외국어'}→${tl} 전문 동시통역사이자 번역 감수자다. [원문]은 실시간 음성 인식 결과이고, [기계 번역]은 엔진이 만든 초벌 번역이다. [원문]의 뜻을 정확하고 자연스러운 ${tl}로 옮긴 최종 번역문을 써라.
 규칙
-1. 정확성이 먼저다. [기계 번역]이 원문과 다르면(오역·누락·추가·어색한 직역) 원문에 맞게 고친다. 맞고 자연스러운 부분은 그대로 둔다.
+1. 정확성이 먼저다. [기계 번역]이 원문과 다르면(오역·누락·추가·뜻이 통하지 않는 직역) 그 부분을 원문에 맞게 고친다.
 2. 원문에 없는 내용을 넣지 않고, 있는 내용을 빼지 않는다. 나열된 이름·숫자·날짜는 모두 옮긴다.
 3. 논리 관계(원인·조건·양보·순서)와 사실 관계(했다/하려 했다/할 수 있다)를 바꾸지 않는다. 원문보다 센 말로 과장하지 않는다.
 4. 관용구·속어·사자성어는 글자 그대로가 아니라 뜻으로 옮긴다.
 5. 고유명사·전문 용어는 ${tl}에서 통용되는 표준 표기를 쓴다. [용어]가 있으면 그대로 따른다.
-6. ${tl} 원어민이 실제로 쓰는 표현으로 쓴다. 번역투를 피하고, 주어와 서술어가 맞는지 확인한다. 말더듬·되풀이·군말은 정리한다.
+6. ${tl} 원어민이 실제로 쓰는 표현으로 쓴다. 번역투를 피하고, 주어와 서술어가 맞는지 확인한다. 뜻 없는 말더듬·되풀이는 정리한다. 다만 읽는 사람은 이미 [기계 번역]을 화면에서 보고 있다 — 맞고 자연스러운 부분은 낱말과 어순을 그대로 두고, 고칠 곳만 고친다. 뜻이 같은 다른 낱말로 바꿔 쓰지 않는다. 영문 상표·서비스 이름(YouTube, LINE, Gmail 등)은 [기계 번역]의 표기를 그대로 둔다.
 7. 화자의 말투(격식체·구어체)와 문장 종류(평서문·의문문)를 유지하고, 한 번역문 안에서 말투를 섞지 않는다.
 8. 원문에 문맥상 명백한 음성 인식 오류(발음이 같거나 비슷한 다른 말)가 있으면 의도한 말로 이해해 옮긴다. 확실하지 않으면 원문대로 옮긴다.
 9. 원문이 문장 중간에서 끊긴 조각이면 조각 그대로 자연스럽게 옮긴다. [직전 대화]는 맥락 참고용이다. 그 내용을 옮겨 쓰지 않는다.
@@ -53,9 +53,12 @@ const refineUser = (src, mt, tgtLang, context) => {
 };
 // 평가 도구용: 다른 모델로 같은 지시문을 시험할 때 쓴다(tools/eval)
 export const refinePrompt = (src, mt, tgtLang, context) => ({ sys: refineSystem(scriptLang(src), tgtLang), user: refineUser(src, mt, tgtLang, context) });
+// 지금 쓰는 감수 모델: 관리자가 고른 모델(허용 목록 안) 또는 기본값
+export const currentRefineModel = () => (REFINE_MODELS.some((m) => m.id === appSettings.refineModel) ? appSettings.refineModel : REFINE_MODEL);
 async function refineCall(sys, user, maxTokens) {
-  const body = { model: REFINE_MODEL, max_completion_tokens: maxTokens, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] };
-  const re = reasoningEffort(REFINE_MODEL);
+  const model = currentRefineModel();
+  const body = { model, max_completion_tokens: maxTokens, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] };
+  const re = reasoningEffort(model);
   if (re) body.reasoning_effort = re;
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

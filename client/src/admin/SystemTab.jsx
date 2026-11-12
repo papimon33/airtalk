@@ -12,6 +12,9 @@ import DialogActions from '@mui/material/DialogActions';
 import TextField from '@mui/material/TextField';
 import Alert from '@mui/material/Alert';
 import Tooltip from '@mui/material/Tooltip';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import { alpha } from '@mui/material/styles';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined';
@@ -34,6 +37,55 @@ function StatCard({ icon, label, value, sub }) {
 }
 
 // 시스템 상태 + 관리자 2FA 설정
+// 번역 감수 모델 고르기 — 엔진의 초벌 번역을 고쳐 쓰는 모델. 바꾸면 다음 문장부터 적용된다
+const REFINE_HINT = {
+  'gpt-6.1-terra': '정확도가 가장 높습니다. 고친 문장으로 바뀌는 데 2초쯤 걸립니다.',
+  'gpt-6-luna': '비용이 적게 듭니다. 정확도는 TERRA보다 조금 낮습니다.',
+};
+function RefineModelCard() {
+  const [data, setData] = useState(null); // { model, options:[{id,label}] }
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);   // { ok, text }
+  useEffect(() => { api.adminRefineModel().then(setData).catch(() => setMsg({ ok: false, text: '번역 감수 모델을 불러오지 못했습니다. 새로 고친 뒤 다시 확인하세요.' })); }, []);
+  const pick = async (id) => {
+    if (!data || busy || id === data.model) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.adminSetRefineModel(id);
+      setData(r);
+      const o = r.options.find((x) => x.id === r.model);
+      setMsg({ ok: true, text: `번역 감수 모델을 ${o ? o.label : r.model}로 바꿨습니다.` });
+    } catch {
+      setMsg({ ok: false, text: '번역 감수 모델을 바꾸지 못했습니다. 잠시 뒤 다시 시도하세요.' });
+    }
+    setBusy(false);
+  };
+  return (
+    <Paper variant="outlined" sx={{ borderRadius: 1.5, p: 3, mb: 2.5 }}>
+      <Typography sx={{ fontWeight: 800, fontSize: 15, mb: 0.5 }}>번역 감수 모델</Typography>
+      <Typography sx={{ fontSize: 13, color: 'text.secondary', mb: 1.5 }}>
+        번역 서비스가 먼저 보여 준 번역을 고쳐 쓰는 모델입니다. 바꾸면 다음 문장부터 적용됩니다.
+      </Typography>
+      {msg && <Alert severity={msg.ok ? 'success' : 'error'} sx={{ mb: 1.5 }}>{msg.text}</Alert>}
+      {!data ? (!msg && <Typography sx={{ fontSize: 13, color: 'text.secondary' }}>불러오는 중…</Typography>) : (
+        <RadioGroup aria-label="번역 감수 모델" value={data.model} onChange={(e) => pick(e.target.value)}>
+          {data.options.map((o) => (
+            <FormControlLabel
+              key={o.id} value={o.id} disabled={busy} control={<Radio size="small" />} sx={{ alignItems: 'flex-start', mb: 0.5, '& .MuiRadio-root': { pt: 0.5 } }}
+              label={(
+                <Box>
+                  <Typography sx={{ fontSize: 14, fontWeight: 700 }}>{o.label}</Typography>
+                  <Typography sx={{ fontSize: 12.5, color: 'text.secondary' }}>{REFINE_HINT[o.id] || o.id}</Typography>
+                </Box>
+              )}
+            />
+          ))}
+        </RadioGroup>
+      )}
+    </Paper>
+  );
+}
+
 function SystemPanel() {
   const [health, setHealth] = useState(null);
   const [tfa, setTfa] = useState(null); // { enabled, viaEnv }
@@ -101,6 +153,8 @@ function SystemPanel() {
           </>
         )}
       </Paper>
+
+      <RefineModelCard />
 
       <Paper variant="outlined" sx={{ borderRadius: 1.5, p: 3 }}>
         <Typography sx={{ fontWeight: 800, fontSize: 15, mb: 0.5 }}>관리자 2단계 인증</Typography>

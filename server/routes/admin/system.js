@@ -1,8 +1,9 @@
 /* 관리자 시스템: 상태(health)·브라우저 오류 수집 / 전체 초기화·백업 */
 import crypto from 'crypto';
-import { ADMIN_PASSWORD, DESKLOG_CAP } from '../../config.js';
+import { ADMIN_PASSWORD, DESKLOG_CAP, REFINE_MODELS } from '../../config.js';
 import { metrics } from '../../metrics.js';
-import { sessions, setSessions, dataKey, col, dirtySessions, sessionsFlushInflight, flushSessions, termsConfig } from '../../store/index.js';
+import { sessions, setSessions, dataKey, col, dirtySessions, sessionsFlushInflight, flushSessions, termsConfig, saveAppSettings } from '../../store/index.js';
+import { currentRefineModel } from '../../vendors/openai.js';
 import { requireAdmin, adminTotpSecret } from '../../auth/index.js';
 import { rooms } from '../../realtime/rooms.js';
 import { wss } from '../../realtime/index.js';
@@ -26,6 +27,17 @@ export function registerSystemRoutes(app) {
       recentErrors: metrics.errors.slice(-20).reverse(),
       clientErrors: metrics.clientErrors.slice(-20).reverse(),
     });
+  });
+  // 번역 감수 모델: 지금 쓰는 모델과 고를 수 있는 목록 / 바꾸기(다음 문장부터 바로 적용, 재시작 뒤에도 유지)
+  app.get('/api/admin/refine-model', requireAdmin, (req, res) => {
+    res.json({ model: currentRefineModel(), options: REFINE_MODELS });
+  });
+  app.put('/api/admin/refine-model', requireAdmin, async (req, res) => {
+    const model = String((req.body || {}).model || '');
+    if (!REFINE_MODELS.some((m) => m.id === model)) return res.status(400).json({ error: '고를 수 없는 모델입니다.' });
+    try { await saveAppSettings({ refineModel: model }); }
+    catch (e) { return res.status(500).json({ error: '저장하지 못했습니다. 잠시 뒤 다시 시도하세요.' }); }
+    res.json({ model: currentRefineModel(), options: REFINE_MODELS });
   });
   // 브라우저 오류 수집(window.onerror) — 관리자 시스템 상태에서 확인.
   // 무인증 엔드포인트이므로 IP당 분당 10회로 제한(스팸·소음 방지).

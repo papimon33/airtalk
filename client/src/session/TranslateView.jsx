@@ -58,6 +58,7 @@ import MobileLive from '../phone/MobileLive.jsx';
 import { setPref, usePrefs } from '../shared/prefs.js';
 import { can, setRecordingFlag } from '../shared/authState.js';
 import { api } from '../shared/api.js';
+import { LiveText, pinBottom } from '../shared/liveText.jsx';
 
 function VolumeIcon({ level }) {
   if (!level) return <VolumeOffIcon fontSize="small" sx={{ color: 'text.disabled' }} />;
@@ -415,8 +416,7 @@ export default function TranslateView({ session: initial, onBack, mobile = false
   }, [initial.id]);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    pinBottom(scrollRef.current); // 줄이 늘 때 뚝 밀리지 않게 조금씩 따라 내려간다
   }, [messages, partials]);
 
   // 데스크: 패시브 뷰어 연결 — 뷰어(손님)가 시작해도 호스트 화면에 동시 표출(녹음 안 해도 수신)
@@ -1453,7 +1453,9 @@ const Row = React.memo(function Row({ side, text, source, dir, scale = 1, draft 
   return (
     // 카드/박스/구분선 없이 여백만으로 구분. 번역문(큰 글씨) 위 · 원어(작은 회색) 아래. 원어 항상 표시.
     <Box>
-      <Typography
+      <LiveText
+        text={mainText}
+        draft={pending || draft}
         sx={{
           fontSize: { xs: Math.round(21 * scale), sm: Math.round(24 * scale) },
           lineHeight: 1.5,
@@ -1463,9 +1465,7 @@ const Row = React.memo(function Row({ side, text, source, dir, scale = 1, draft 
           color: mainColor,
           fontStyle: pending ? 'italic' : 'normal',
         }}
-      >
-        {mainText}
-      </Typography>
+      />
       {pending && <Typography sx={{ fontSize: 12.5, color: 'text.disabled', mt: 0.3 }}>번역 중…</Typography>}
       {/* 원문이 표시 문장과 같으면(출력 언어로 말한 발화 — 예: 한국어→한국어 기록) 두 번 쓰지 않는다 */}
       {!pending && source && source.trim() !== String(text || '').trim() && (

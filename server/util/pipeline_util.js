@@ -308,6 +308,19 @@ const SENT_END_RE = /[.!?。！？…]["'”’)\]]*\s*$/;
 export const endsSentence = (s) => SENT_END_RE.test(String(s || ''));
 export const stripSentenceEnd = (s) => String(s || '').replace(/[.!?。！？…]+\s*$/, '');
 
+/* 엔진 끊김 설정(endpoint) — 값이 없으면 문서 기본값(민감도 0, 최대 지연 2000ms, 지연 레벨 0).
+   화면이 이 값을 보내지 않게 된 뒤(2026-11-08) Number(null)=0 이 '0ms → 최솟값 500ms'로 들어가, 잠깐만 멈춰도
+   문장 중간에서 카드가 잘렸다("…听我。" / "最喜欢。" / "那个CEO。"). 빈 값은 반드시 기본값으로 본다. */
+export function endpointOptions(sens, maxDelay, latency) {
+  const num = (v) => (v == null || v === '' ? NaN : Number(v));
+  const s = num(sens), d = num(maxDelay), l = num(latency);
+  return {
+    endpoint_sensitivity: Number.isFinite(s) ? Math.min(1, Math.max(-1, s)) : 0,
+    max_endpoint_delay_ms: Number.isFinite(d) ? Math.min(3000, Math.max(500, d)) : 2000,
+    endpoint_latency_adjustment_level: Number.isFinite(l) ? Math.min(3, Math.max(0, Math.round(l))) : 0,
+  };
+}
+
 const FLIP_MIN_CARD = 4;   // 앞 카드의 말이 이보다 적으면 첫 단어 오인식일 수 있어 나누지 않는다(다수결이 바로잡음)
 const FLIP_READY = 12;     // 문장이 안 끝나도 이만큼 이어지면 문장 속 외국어가 아니라 다음 사람의 말로 본다
 

@@ -41,6 +41,18 @@
   .msg .spk { display:none; }
   .msg .line { font-size:var(--fs); font-weight:500; line-height:1.45; color:var(--txt); overflow-wrap:anywhere; }
   .msg .line.pending, .msg .line.draft { color:var(--muted); }
+  /* 글자 바뀜 처리(앱 client/src/shared/liveText.jsx 와 같은 규칙): 진행 중 글자는 떠오르듯 붙고, 감수로 바뀐 낱말은 잠깐 강조 */
+  .msg .line { transition: color .25s; }
+  @keyframes at-in { from { opacity:.25 } to { opacity:1 } }
+  @keyframes at-swap { from { opacity:.5 } to { opacity:1 } }
+  @keyframes at-chg { 0% { background-color:rgba(91,76,240,.30) } 100% { background-color:rgba(91,76,240,0) } }
+  .at-in { animation: at-in .28s ease-out both; }
+  .at-swap { animation: at-swap .3s ease-out both; }
+  .at-chg { animation: at-chg 2.4s ease-out both; border-radius:4px; -webkit-box-decoration-break:clone; box-decoration-break:clone; }
+  /* 데모(?srcDraft=line): 진행 중인 카드의 원문은 끝부분만 한 줄로 */
+  .msg .src.src1 { justify-content:flex-end; overflow:hidden; white-space:nowrap; -webkit-mask-image:linear-gradient(to right, transparent 0, #000 28px); mask-image:linear-gradient(to right, transparent 0, #000 28px); }
+  .msg .src.src1 > span { flex:none; min-width:100%; }
+  @media (prefers-reduced-motion: reduce) { .at-in, .at-swap, .at-chg { animation:none; } }
   .msg .src { font-size:calc(14.5px * var(--k)); color:var(--muted); line-height:1.5; margin-top:5px; overflow-wrap:anywhere; }
   .msg .line[lang|="ko"], .msg .src[lang|="ko"] { word-break:keep-all; }
   /* 언어별 글꼴: 한·영 Pretendard(기본), 일본어 Pretendard JP, 중국어 Noto Sans SC — 문장·언어 버튼·화면 언어(html lang)에 달린 lang 기준 */
@@ -348,11 +360,57 @@ function applyFs(){
 }
 // 원문은 항상 함께 보인다('원문 동시 보기' 토글 삭제).
 // 단, 원문이 표시 문장과 같으면(출력 언어로 말한 발화 — 예: 한국어→한국어 기록, 번역 도착 전 원문 표시) 두 번 쓰지 않는다
+// 데모: 진행 중인 카드의 원문 표시 — 주소에 ?srcDraft=hide(숨김) | line(끝부분 한 줄) | full(지금처럼)
+const SRC_DRAFT = (() => { try { const q = new URLSearchParams(location.search).get('srcDraft'); return q === 'hide' || q === 'line' ? q : 'full'; } catch { return 'full'; } })();
 function srcShown(c){
+  if (c.draft && SRC_DRAFT === 'hide') return false;
   if (twoMode()) return !!c.sub && c.sub.trim() !== String(c.line.textContent || '').trim();
   return !isDesk() && !!c.source && c.source.trim() !== String(c.line.textContent || '').trim();
 }
-function applySrc(){ cards.forEach(c => { c.src.style.display = srcShown(c) ? 'block':'none'; }); }
+// 원문 줄 쓰기: 데모 'line' 이면 진행 중엔 끝부분만 한 줄
+function setSrc(c, text){
+  const one = !!c.draft && SRC_DRAFT === 'line';
+  c.src.classList.toggle('src1', one);
+  if (one) { c.src.textContent = ''; const sp = document.createElement('span'); sp.textContent = text; c.src.appendChild(sp); }
+  else c.src.textContent = text;
+}
+/* 번역문 쓰기(앱 LiveText 와 같은 규칙): 진행 중에 뒤에 붙으면 새 글자만 떠오르고, 확정 뒤 바뀌면(감수) 바뀐 낱말만 잠깐 강조 */
+const TOK = /[぀-ヿ㐀-鿿豈-﫿]|[^\s぀-ヿ㐀-鿿豈-﫿]+\s*|\s+/g;
+function diffMarks(a, b){
+  const A = String(a || '').match(TOK) || [], B = String(b || '').match(TOK) || [];
+  const n = A.length, m = B.length;
+  if (!n || !m || n * m > 90000) return [{ t: String(b || ''), c: false }];
+  const ka = A.map(x => x.trim()), kb = B.map(x => x.trim());
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = ka[i] === kb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = [];
+  const push = (t, c) => { const l = out[out.length - 1]; if (l && l.c === c) l.t += t; else out.push({ t, c }); };
+  for (let i = 0, j = 0; j < m;) {
+    if (i < n && ka[i] === kb[j]) { push(B[j], false); i++; j++; }
+    else if (i < n && dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else { push(B[j], !!kb[j]); j++; }
+  }
+  return out;
+}
+let liveAnim = true; // 언어 바꾸기 등 전체 다시 그리기 중에는 강조하지 않는다
+function setLive(el, text, draft){
+  text = String(text || '');
+  const pt = el._t || '', pd = el._d !== false;
+  if (text === pt) { el._d = !!draft; return; }
+  if (liveAnim && pt && !draft && !pd) {
+    const wrap = document.createElement('span'); wrap.className = 'at-swap';
+    for (const g of diffMarks(pt, text)) {
+      if (g.c) { const mk = document.createElement('span'); mk.className = 'at-chg'; mk.textContent = g.t; wrap.appendChild(mk); }
+      else wrap.appendChild(document.createTextNode(g.t));
+    }
+    el.textContent = ''; el.appendChild(wrap);
+  } else if (liveAnim && pt && draft && pd && text.startsWith(pt)) {
+    el.textContent = pt;
+    const add = document.createElement('span'); add.className = 'at-in'; add.textContent = text.slice(pt.length); el.appendChild(add);
+  } else el.textContent = text;
+  el._t = text; el._d = !!draft;
+}
+function applySrc(){ cards.forEach(c => { c.src.style.display = srcShown(c) ? (c.src.classList.contains('src1') ? 'flex' : 'block') : 'none'; }); }
 function twoMode(){ return sxTwo && !isDesk(); }
 
 applyFs();
@@ -509,8 +567,24 @@ function pick(texts){
   if(sessionPipeline === 'translate' || sessionPipeline === 'soniox'){ const k=Object.keys(texts); if(k.length) return texts[k[0]]; }
   return '';
 }
-function atBottom(){ return document.body.scrollHeight - window.scrollY - window.innerHeight < 160; }
-function scrollDown(){ window.scrollTo(0, document.body.scrollHeight); }
+function atBottom(){ return !!pinRaf || document.body.scrollHeight - window.scrollY - window.innerHeight < 160; } // 따라 내려가는 중이면 맨 아래로 본다
+// 맨 아래 붙어 보기 — 줄이 늘 때 화면이 뚝 밀리지 않게 조금씩 따라 내려간다(많이 늘었거나 움직임 줄이기 설정이면 바로)
+let pinRaf = 0;
+// 사용자가 직접 올려 보면 따라가기를 멈춘다
+['wheel', 'touchmove'].forEach((ev) => window.addEventListener(ev, () => { if (pinRaf) { cancelAnimationFrame(pinRaf); pinRaf = 0; } }, { passive: true }));
+function scrollDown(){
+  const target = () => Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || target() - window.scrollY > window.innerHeight * 1.5) { window.scrollTo(0, target()); return; }
+  if (pinRaf) return;
+  const step = () => {
+    const d = target() - window.scrollY;
+    if (d <= 0.5) { window.scrollTo(0, target()); pinRaf = 0; return; }
+    window.scrollTo(0, window.scrollY + Math.max(1, d * 0.22));
+    pinRaf = requestAnimationFrame(step);
+  };
+  pinRaf = requestAnimationFrame(step);
+}
 
 function upsert(item){
   // 에코 드랍(clearCard): 서버가 빈 페이로드를 보내면 카드를 제거 — 빈 줄이 남아 최신 강조가 걸리던 문제(TranslateView·desk 와 동일 규약)
@@ -567,7 +641,7 @@ function renderLine(c){
     c.el.classList.remove('latest');
     if (c.spk){ c.spk.className = 'who'; c.spk.style.display = r.t ? '' : 'none'; c.spk.textContent = r.staff ? dt('staff') : (dt('you') + ' · ' + String(curLang).toUpperCase()); }
     c.line.className = 'line' + (c.draft ? ' draft' : ''); // className 통째 교체라 여기서 같이 얹는다
-    c.line.textContent = r.t;
+    setLive(c.line, r.t, c.draft);
     if (c.src) c.src.style.display = 'none';
     c.el.style.display = r.t ? '' : 'none';
     return;
@@ -591,12 +665,12 @@ function renderLine(c){
     const to = mine ? other : curLang;
     if (c.spk){ c.spk.className = 'who'; c.spk.style.display = main ? '' : 'none'; c.spk.textContent = spoken ? (langName(spoken) + ' → ' + langName(to)) : langName(to); }
     c.line.className = 'line' + (pending ? ' pending' : '') + (c.draft ? ' draft' : '');
-    c.line.textContent = main;
-    c.src.textContent = c.sub || '';
+    setLive(c.line, main, c.draft || pending);
+    setSrc(c, c.sub || '');
     // 줄마다 언어 표시 — 한국어만 어절 줄바꿈 + 한자 글꼴(일/중) 선택이 맞게
     c.line.lang = pending ? (spoken || '') : curLang;
     c.src.lang = mine ? (other || '') : (spoken || '');
-    c.src.style.display = srcShown(c) ? 'block' : 'none';
+    c.src.style.display = srcShown(c) ? (c.src.classList.contains('src1') ? 'flex' : 'block') : 'none';
     c.el.style.display = main ? '' : 'none';
     return;
   }
@@ -609,12 +683,12 @@ function renderLine(c){
   const txt = pick(c.texts);
   c.line.classList.toggle('pending', !txt && !!c.source);
   c.line.classList.toggle('draft', !!c.draft); // 진행 중 → 회색, 확정되면 제 색으로
-  c.line.textContent = txt || c.source || '';
+  setLive(c.line, txt || c.source || '', c.draft || (!txt && !!c.source));
   if (txt) c.line.lang = curLang; else c.line.removeAttribute('lang');
   // 원문은 번역 아래 작은 줄로 항상(표시 문장과 같으면 생략)
-  c.src.textContent = c.source || '';
+  setSrc(c, c.source || '');
   if (c.lang) c.src.lang = c.lang; // 원문 언어(서버가 보낸 발화 언어) — 한국어면 어절 단위 줄바꿈
-  c.src.style.display = srcShown(c) ? 'block' : 'none';
+  c.src.style.display = srcShown(c) ? (c.src.classList.contains('src1') ? 'flex' : 'block') : 'none';
   // 양방향: 저장된 타깃 언어 키로 발화 방향 판별(언어1 발화→texts[언어2], 언어2 발화→texts[언어1])
   c.el.classList.remove('dirA', 'dirB');
   if (sxTwo && c.texts) {
@@ -636,7 +710,7 @@ function applyWhoRuns(){
   }
 }
 // 언어를 바꾸면 화면 문구·방향 라벨 언어와 '원문=표시 문장' 여부도 바뀐다
-function rerender(){ applyUi(); cards.forEach(renderLine); applySrc(); applyWhoRuns(); }
+function rerender(){ applyUi(); liveAnim = false; try { cards.forEach(renderLine); } finally { liveAnim = true; } applySrc(); applyWhoRuns(); }
 // 데스크: 대화 종료 시 화면 초기화(다음 손님)
 function clearAll(){ cards.forEach(c=>c.el.remove()); cards.clear(); order=[]; latestId=null; setPartial(''); if(empty) empty.style.display=''; }
 function setPartial(text){ const s=atBottom(); partialEl.innerHTML = text ? ('<div class="line">'+text.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]))+'</div>') : ''; if(s) scrollDown(); }

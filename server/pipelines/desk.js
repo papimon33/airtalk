@@ -7,7 +7,7 @@ import { newId, capDeskLog } from '../store/sessions.js';
 import { rooms, deskCtrl, getRoom, broadcast } from '../realtime/rooms.js';
 import { openSonioxWs, buildSonioxContext } from '../vendors/soniox.js';
 import { echoNorm, echoMatch } from '../util/security_util.js';
-import { isAckOnly, stripFillers, langJudge, flipHold, speechWeight, stripSentenceEnd } from '../util/pipeline_util.js';
+import { isAckOnly, stripFillers, langJudge, flipHold, speechWeight, stripSentenceEnd, endpointOptions } from '../util/pipeline_util.js';
 
 /* ---- 데스크 2마이크(PC 호스트): 여객 마이크 오디오 공급 전용 연결 ----
    호스트 PC 가 지향성 마이크 2대를 직접 잡아 두 번째 장치를 src=guestmic 연결로 스트리밍한다.
@@ -65,7 +65,6 @@ export function runDeskGuestFeed(ws) {
 export function runDesk(h) {
   const { ws, sessionId, session, toHost, liveSend, upsertItem, polishCommit } = h;
   if (!SONIOX_API_KEY) { toHost({ type: 'status', message: 'SONIOX_API_KEY 미설정 — 데스크 모드 사용 불가' }); return; }
-  const sens = Number(ws._sxSens), maxDelay = Number(ws._sxMaxDelay), latency = Number(ws._sxLatency);
   const A = 'ko'; // 안내원 언어(고정)
   // 손님(또는 호스트)이 고르는 언어(soniox 지원, 한국어 제외).
   // es·fr·de 추가: '기타 언어'(자동 감지) 힌트로도 쓰이는데 빠져 있으면 해당 언어 첫 발화가
@@ -176,9 +175,7 @@ export function runDesk(h) {
     model: SONIOX_MODEL, audio_format: 'pcm_s16le', sample_rate: 24000, num_channels: 1,
     client_reference_id: 'u:' + (ws._userId || 'anon') + '|p:desk', // 유저별+파이프라인(안내데스크) 사용량 집계
     enable_language_identification: true, enable_endpoint_detection: true,
-    endpoint_sensitivity: Number.isFinite(sens) ? Math.min(1, Math.max(-1, sens)) : 0,
-    max_endpoint_delay_ms: Number.isFinite(maxDelay) ? Math.min(3000, Math.max(500, maxDelay)) : 2000,
-    endpoint_latency_adjustment_level: Number.isFinite(latency) ? Math.min(3, Math.max(0, Math.round(latency))) : 0,
+    ...endpointOptions(ws._sxSens, ws._sxMaxDelay, ws._sxLatency),
     ...((() => { const c = buildSonioxContext(langs, { desk: true, target }); return c ? { context: c } : {}; })()), // 데스크: 항공용어 카테고리 제외
   });
   // 손님이 한국어를 고르면 two_way 가 성립하지 않으므로 전부 한국어로 표기(one_way→ko)

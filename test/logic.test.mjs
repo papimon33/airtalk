@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kstDay, isAckOnly, stripFillers, sanitizeTranslation, deskCtlAllowed, langScriptOk, polishLengthOk, langJudge,
-  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens, scriptLang,
+  copiesContext, termsKept, addsNote, translationCut, termHintsFrom, trimScopedTerms, estimateContextTokens, scriptLang, endpointOptions,
 } from '../server/util/pipeline_util.js';
 import { agentTextFeed } from '../server/util/agent_text.js';
 
@@ -162,6 +162,15 @@ test('estimateContextTokens: Soniox 가 세는 방식(용어 문자열 + 항목�
   assert.equal(estimateContextTokens({ terms: ko }), 10 + chars + 2500);
   const actualPerTerm = 9996 / (7505 + 2500); // 실측: 한글 인식어 2,500개(7,505자) = 9,996토큰
   assert.ok(Math.abs(actualPerTerm - 1) < 0.02);
+});
+
+test('endpointOptions: 화면이 값을 안 보내면 문서 기본값(최대 지연 2000ms)', () => {
+  // 2026-11-12: 빈 값(null)이 0 → 최솟값 500ms 로 들어가 문장 중간에서 카드가 잘렸다
+  assert.deepEqual(endpointOptions(null, null, null), { endpoint_sensitivity: 0, max_endpoint_delay_ms: 2000, endpoint_latency_adjustment_level: 0 });
+  assert.deepEqual(endpointOptions(undefined, '', undefined), { endpoint_sensitivity: 0, max_endpoint_delay_ms: 2000, endpoint_latency_adjustment_level: 0 });
+  assert.deepEqual(endpointOptions('0.5', '900', '2'), { endpoint_sensitivity: 0.5, max_endpoint_delay_ms: 900, endpoint_latency_adjustment_level: 2 });
+  assert.equal(endpointOptions('0', '100', '9').max_endpoint_delay_ms, 500, '보낸 값은 허용 범위로');
+  assert.equal(endpointOptions('x', 'y', 'z').max_endpoint_delay_ms, 2000);
 });
 
 test('scriptLang: 글자로 원문 언어를 고른다(감수 지시문의 언어쌍)', () => {

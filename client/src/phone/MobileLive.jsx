@@ -20,6 +20,7 @@ import { useT } from '../shared/i18n.js';
 import { CheckIcon, SettingsIcon, MicIcon, MicOffIcon, PlayIcon, QrIcon, LogOutIcon, TranslateIcon, TtsIcon, VolumeOffIcon, VolumeOnIcon } from '../shared/icons.jsx';
 import { BRAND, BRAND_SOFT } from '../shared/brand.js';
 import { api } from '../shared/api.js';
+import { LiveText, SourceLine } from '../shared/liveText.jsx';
 import { PcHeader, PcDock } from '../pc/PcSession.jsx';
 
 const BLUE = '#1F5BBF';
@@ -38,11 +39,9 @@ export function Line({ text, source, draft, scale, t, lang, srcLang }) {
   const mainLang = pending ? srcLang : lang;
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6 }}>
-      <Typography lang={mainLang || undefined} sx={{ fontSize: Math.round(22 * scale), fontWeight: 500, lineHeight: 1.45, wordBreak: 'keep-all', overflowWrap: 'anywhere', color: pending || draft ? 'text.secondary' : 'text.primary' }}>
-        {main}
-      </Typography>
+      <LiveText text={main} draft={pending || draft} lang={mainLang || undefined} sx={{ fontSize: Math.round(22 * scale), fontWeight: 500, lineHeight: 1.45, wordBreak: 'keep-all', overflowWrap: 'anywhere', color: pending || draft ? 'text.secondary' : 'text.primary' }} />
       {!pending && source && !sameText(source, text) && (
-        <Typography lang={srcLang || undefined} sx={{ fontSize: Math.round(14.5 * scale), lineHeight: 1.5, color: 'text.secondary', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{source}</Typography>
+        <SourceLine text={source} draft={draft} lang={srcLang || undefined} sx={{ fontSize: Math.round(14.5 * scale), lineHeight: 1.5, color: 'text.secondary', wordBreak: 'keep-all', overflowWrap: 'anywhere' }} />
       )}
       {pending && <Typography sx={{ fontSize: 12.5, color: 'text.disabled' }}>{t('pending')}</Typography>}
     </Box>
@@ -62,9 +61,9 @@ export function Bubble({ mine, label, text, source, draft, scale, lang, srcLang 
         borderRadius: mine ? '20px 6px 20px 20px' : '6px 20px 20px 20px',
         bgcolor: (th) => (mine ? alpha(th.palette.text.primary, 0.06) : alpha(th.palette.accent.main, th.palette.mode === 'dark' ? 0.22 : 0.1)),
       }}>
-        <Typography lang={mainLang || undefined} sx={{ fontSize: Math.round(19 * scale), fontWeight: 500, lineHeight: 1.45, wordBreak: 'keep-all', overflowWrap: 'anywhere', color: pending || draft ? 'text.secondary' : 'text.primary' }}>{main}</Typography>
+        <LiveText text={main} draft={pending || draft} lang={mainLang || undefined} sx={{ fontSize: Math.round(19 * scale), fontWeight: 500, lineHeight: 1.45, wordBreak: 'keep-all', overflowWrap: 'anywhere', color: pending || draft ? 'text.secondary' : 'text.primary' }} />
         {!pending && source && !sameText(source, text) && (
-          <Typography lang={srcLang || undefined} sx={{ fontSize: Math.round(13.5 * scale), lineHeight: 1.5, color: 'text.secondary', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{source}</Typography>
+          <SourceLine text={source} draft={draft} lang={srcLang || undefined} sx={{ fontSize: Math.round(13.5 * scale), lineHeight: 1.5, color: 'text.secondary', wordBreak: 'keep-all', overflowWrap: 'anywhere' }} />
         )}
       </Box>
     </Box>

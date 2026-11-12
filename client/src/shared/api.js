@@ -133,6 +133,9 @@ export const api = {
   // 자주 묻는 질문(GPT 클러스터링) / 용어 적중 분석 / 정형 안내 멘트
   adminTermsHit: () => fetch('/api/admin/terms-hit').then(json),
   adminHealth: () => fetch('/api/admin/health').then(json),
+  adminRefineModel: () => fetch('/api/admin/refine-model').then(json), // 번역 감수 모델(지금 쓰는 모델 + 고를 수 있는 목록)
+  adminSetRefineModel: (model) =>
+    fetch('/api/admin/refine-model', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) }).then(json),
   adminResetAll: (password) =>
     fetch('/api/admin/reset-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }).then(json), // 전체 초기화(비밀번호 재확인)
   adminTermsSuggest: (sessionIds) =>
