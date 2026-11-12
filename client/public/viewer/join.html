@@ -49,7 +49,7 @@
   .at-in { animation: at-in .28s ease-out both; }
   .at-swap { animation: at-swap .3s ease-out both; }
   .at-chg { animation: at-chg 2.4s ease-out both; border-radius:4px; -webkit-box-decoration-break:clone; box-decoration-break:clone; }
-  /* 데모(?srcDraft=line): 진행 중인 카드의 원문은 끝부분만 한 줄로 */
+  /* 진행 중인 카드의 원문은 끝부분만 한 줄로(확정되면 전체) */
   .msg .src.src1 { justify-content:flex-end; overflow:hidden; white-space:nowrap; -webkit-mask-image:linear-gradient(to right, transparent 0, #000 28px); mask-image:linear-gradient(to right, transparent 0, #000 28px); }
   .msg .src.src1 > span { flex:none; min-width:100%; }
   @media (prefers-reduced-motion: reduce) { .at-in, .at-swap, .at-chg { animation:none; } }
@@ -360,14 +360,14 @@ function applyFs(){
 }
 // 원문은 항상 함께 보인다('원문 동시 보기' 토글 삭제).
 // 단, 원문이 표시 문장과 같으면(출력 언어로 말한 발화 — 예: 한국어→한국어 기록, 번역 도착 전 원문 표시) 두 번 쓰지 않는다
-// 데모: 진행 중인 카드의 원문 표시 — 주소에 ?srcDraft=hide(숨김) | line(끝부분 한 줄) | full(지금처럼)
-const SRC_DRAFT = (() => { try { const q = new URLSearchParams(location.search).get('srcDraft'); return q === 'hide' || q === 'line' ? q : 'full'; } catch { return 'full'; } })();
+// 진행 중인 카드의 원문 표시 — 기본은 끝부분만 한 줄(line). 비교용: 주소에 ?srcDraft=full(전체) | hide(숨김)
+const SRC_DRAFT = (() => { try { const q = new URLSearchParams(location.search).get('srcDraft'); return q === 'hide' || q === 'full' ? q : 'line'; } catch { return 'line'; } })();
 function srcShown(c){
   if (c.draft && SRC_DRAFT === 'hide') return false;
   if (twoMode()) return !!c.sub && c.sub.trim() !== String(c.line.textContent || '').trim();
   return !isDesk() && !!c.source && c.source.trim() !== String(c.line.textContent || '').trim();
 }
-// 원문 줄 쓰기: 데모 'line' 이면 진행 중엔 끝부분만 한 줄
+// 원문 줄 쓰기: 진행 중엔 끝부분만 한 줄(기본)
 function setSrc(c, text){
   const one = !!c.draft && SRC_DRAFT === 'line';
   c.src.classList.toggle('src1', one);

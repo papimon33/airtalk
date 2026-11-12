@@ -83,17 +83,18 @@ export function pinBottom(el) {
   st.raf = requestAnimationFrame(step);
 }
 
-/* 데모: 진행 중인 카드의 원문 표시 방식 — 주소에 ?srcDraft=hide(숨김) | line(한 줄) | full(지금처럼) 을 붙이면 이 브라우저에 기억한다 */
+/* 진행 중인 카드의 원문 표시 방식 — 기본은 끝부분만 한 줄(line): 번역문과 원문이 함께 자라며 화면이 두 번 밀리던 것을 줄인다.
+   비교용: 주소에 ?srcDraft=full(전체) | hide(숨김) | line(기본) 을 붙이면 이 브라우저에 기억한다 */
 export function srcDraftMode() {
   try {
     const q = new URLSearchParams(window.location.search).get('srcDraft');
-    if (q === 'hide' || q === 'line') localStorage.setItem('kac-demo-srcdraft', q);
-    else if (q === 'full') localStorage.removeItem('kac-demo-srcdraft');
+    if (q === 'hide' || q === 'full') localStorage.setItem('kac-demo-srcdraft', q);
+    else if (q === 'line') localStorage.removeItem('kac-demo-srcdraft');
     const v = localStorage.getItem('kac-demo-srcdraft');
-    return v === 'hide' || v === 'line' ? v : 'full';
-  } catch { return 'full'; }
+    return v === 'hide' || v === 'full' ? v : 'line';
+  } catch { return 'line'; }
 }
-// 원문 줄: 진행 중이고 데모가 켜져 있으면 숨기거나, 끝부분만 한 줄로 보여 준다
+// 원문 줄: 진행 중에는 끝부분만 한 줄로(확정되면 전체). 비교용 설정이면 숨기거나 전체로
 export function SourceLine({ text, draft, sx, ...rest }) {
   const mode = draft ? srcDraftMode() : 'full';
   if (mode === 'hide') return null;
