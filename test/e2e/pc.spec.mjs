@@ -182,3 +182,25 @@ test('로그인 화면 — 로그인 버튼 아래 데스크톱 앱 받기 링�
   await expect(a).toBeVisible();
   expect(await a.getAttribute('href')).toMatch(/^\/download\/desktop\?platform=(mac|win)$/);
 });
+
+// 보안 점검(2026-11-12): 다른 계정의 세션은 주소를 알아도 열리지 않는다(없는 주소와 같게 목록으로 돌아간다)
+test('남의 세션 주소는 열리지 않는다', async ({ page, browser }) => {
+  await login(page.request);
+  const mine = await createSession(page.request, { title: 'E2E 관리자 세션', preset: 'oneway' });
+  await page.request.post('/api/admin/users', { data: { id: 'e2e-other', password: 'otherpw1' } });
+  const ctx = await browser.newContext();
+  const other = await ctx.newPage();
+  const r = await other.request.post('/api/login', { data: { id: 'e2e-other', password: 'otherpw1', replace: true } });
+  expect(r.ok()).toBeTruthy();
+  expect((await other.request.get('/api/sessions/' + mine.id)).status()).toBe(403);
+  await other.goto('/s/' + mine.id);
+  await expect(other).toHaveURL(/\/$/);
+  await expect(other.getByText('E2E 관리자 세션')).toHaveCount(0);
+  await ctx.close();
+});
+
+test('관리자 > 시스템 — 서버가 본 접속 주소가 보인다', async ({ page }) => {
+  await login(page.request);
+  await page.goto('/admin/system');
+  await expect(page.getByText(/서버가 본 내 접속 주소: /)).toBeVisible();
+});

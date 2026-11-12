@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { DESKTOP_REPO, GITHUB_TOKEN, DESKTOP_DOWNLOAD_URL } from '../config.js';
-import { requireAuth } from '../auth/index.js';
+import { requireAuth, loginIp } from '../auth/index.js';
 
 /* ---- 데스크톱 앱 배포 (GitHub Release 최신 설치본) — Windows(.exe) + macOS(.dmg) ----
    info: 최신 릴리스의 플랫폼별 설치파일 존재·버전·크기를 반환(10분 캐시).
@@ -67,13 +67,26 @@ async function sendLatestInstaller(res, plat) {
     if (!gh.ok || !gh.body) return res.status(502).send('다운로드 실패: GitHub ' + gh.status);
     // APK 는 전용 MIME 이어야 안드로이드 브라우저가 다운로드 후 바로 설치 화면을 띄운다
     res.setHeader('Content-Type', plat === 'android' ? 'application/vnd.android.package-archive' : 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${(asset.filename || 'KAC-Translator-Setup').replace(/"/g, '')}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${(asset.filename || 'KAC-Translator-Setup').replace(/["\\\r\n]|[^\x20-\x7e]/g, '')}"`);
     if (asset.size) res.setHeader('Content-Length', String(asset.size));
     Readable.fromWeb(gh.body).pipe(res);
   } catch (e) {
     res.status(502).send('다운로드 실패: ' + ((e && e.message) || '오류'));
   }
 }
+
+// 설치 파일은 로그인 없이 받는다. 서버가 GitHub 토큰으로 대신 받아 흘려보내는 경우(비공개 저장소)에는 요청마다
+// 운영자 토큰의 호출 한도와 서버 대역폭을 쓰므로, 접속 주소당 10분에 40번으로 묶는다(2026-11-12 보안 점검).
+const dlHits = new Map(); // ip -> [시각…]
+function downloadAllowed(req) {
+  const ip = loginIp(req), now = Date.now();
+  const arr = (dlHits.get(ip) || []).filter((t) => now - t < 10 * 60 * 1000);
+  if (arr.length >= 40) { dlHits.set(ip, arr); return false; }
+  arr.push(now); dlHits.set(ip, arr);
+  if (dlHits.size > 5000) for (const [k, v] of dlHits) if (!v.length || now - v[v.length - 1] > 10 * 60 * 1000) dlHits.delete(k);
+  return true;
+}
+const tooMany = (res) => res.status(429).send('요청이 너무 많습니다. 잠시 후 다시 시도하세요.');
 
 export function registerDownloadRoutes(app) {
   app.get('/api/desktop/info', requireAuth, async (req, res) => {
@@ -91,10 +104,11 @@ export function registerDownloadRoutes(app) {
   // 설치본은 로그인 없이 받는다(2026-10-28, 로그인 화면 아래 링크) — 앱 안에서 로그인해야 쓸 수 있어 APK(/app)와 같은 이유로 공개.
   // 설치된 앱의 자동 업데이트도 이 주소(?platform=)를 쓴다.
   app.get('/download/desktop', (req, res) => {
+    if (!downloadAllowed(req)) return tooMany(res);
     const plat = req.query.platform === 'mac' ? 'mac' : req.query.platform === 'android' ? 'android' : 'win';
     sendLatestInstaller(res, plat);
   });
   // 휴대폰 브라우저 접속 = 로그인 없이 앱 설치 안내(폰은 앱으로만 쓴다) — APK 는 공개 GitHub 릴리스와 같은 파일이고
   // 앱 안에서도 로그인해야 쓸 수 있으므로 공개해도 된다.
-  app.get('/app', (req, res) => sendLatestInstaller(res, 'android')); // 앱 받기(2026-10-27, 예전 /download/android)
+  app.get('/app', (req, res) => (downloadAllowed(req) ? sendLatestInstaller(res, 'android') : tooMany(res))); // 앱 받기(2026-10-27, 예전 /download/android)
 }

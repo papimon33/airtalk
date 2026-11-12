@@ -18,6 +18,7 @@ function joinMiss(ip) {
   const m = joinMisses.get(ip);
   if (!m || Date.now() - m.at > 10 * 60 * 1000) joinMisses.set(ip, { n: 1, at: Date.now() });
   else m.n++;
+  if (joinMisses.size > 5000) { const now = Date.now(); for (const [k, v] of joinMisses) if (now - v.at > 10 * 60 * 1000) joinMisses.delete(k); } // 기한 지난 기록 정리
 }
 // 뷰어 페이지(빌드 산출물 dist/viewer/*.html)에 이 세션 정보를 심어 보낸다 — 페이지는 window.__JOIN 을 읽는다
 const viewerHtmlCache = new Map();
@@ -48,7 +49,12 @@ export function registerViewerAssetRoutes(app) {
   // 데스크 뷰어 PWA manifest — '홈 화면에 추가'로 실행 시 항상 전체화면 유지. 시작 주소 = /desk/<참여 코드>
   // (참여 코드가 곧 접근 권한이라 토큰을 주소에 싣지 않아도 재실행 후 바로 접속된다. 코드가 없거나 틀리면 /desk 랜딩)
   app.get('/desk.webmanifest', (req, res) => {
-    const s = sessionByJoinCode(req.query.code);
+    // 이 주소도 코드가 맞는지를 알려 주므로(start_url) 참여 페이지와 같은 횟수 제한을 쓴다.
+    // (예전엔 여기만 제한이 없어, 틀린 코드를 무제한으로 대 볼 수 있었다. 2026-11-12 보안 점검)
+    const ip = loginIp(req);
+    const asked = req.query.code != null && String(req.query.code) !== '';
+    const s = asked && !joinBlocked(ip) ? sessionByJoinCode(req.query.code) : null;
+    if (asked && !s && !joinBlocked(ip)) joinMiss(ip);
     const start = s && s.pipeline === 'desk' ? '/desk/' + s.joinCode : '/desk';
     res.type('application/manifest+json').json({
       name: 'KAC Desk', short_name: 'KAC Desk',

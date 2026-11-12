@@ -1,7 +1,7 @@
 /* 본인 계정: 조회·정보 변경(이메일·환경설정·이름·비밀번호)·탈퇴 */
 import crypto from 'crypto';
 import { users, profiles, saveUsers, saveProfiles } from '../store/index.js';
-import { authFromReq, requireAuth, verifyPassword, hashPassword, publicUser, clearAuthCookie, closeAllLogins, setAuthCookie, PASSWORD_MIN_LEN, EMAIL_RE, PREF_RULES } from '../auth/index.js';
+import { authFromReq, requireAuth, verifyPassword, hashPassword, publicUser, clearAuthCookie, closeAllLogins, setAuthCookie, failLocked, failNote, loginFails, PASSWORD_MIN_LEN, EMAIL_RE, PREF_RULES } from '../auth/index.js';
 import { deleteUserAccount } from './admin/accounts.js';
 
 export function registerMeRoutes(app) {
@@ -29,7 +29,12 @@ export function registerMeRoutes(app) {
       const pw = String(b.password);
       if (pw !== b.passwordConfirm) return res.status(400).json({ error: '비밀번호가 일치하지 않습니다.' });
       if (pw.length < PASSWORD_MIN_LEN) return res.status(400).json({ error: `비밀번호는 ${PASSWORD_MIN_LEN}자 이상이어야 합니다.` });
-      if (!verifyPassword(stored, String(b.currentPassword || ''))) return res.status(400).json({ error: '현재 비밀번호가 올바르지 않습니다.' });
+      // 현재 비밀번호 확인도 로그인과 같은 횟수 제한(15분에 8번)을 둔다 — 로그인된 기기를 잠깐 쓴 사람이 비밀번호를 무제한 대입하지 못하게
+      const fk = 'pw|' + stored.id;
+      const wait = failLocked(fk);
+      if (wait) return res.status(429).json({ error: `비밀번호 확인 시도가 너무 많습니다. ${wait}초 후 다시 시도하세요.` });
+      if (!verifyPassword(stored, String(b.currentPassword || ''))) { failNote(fk); return res.status(400).json({ error: '현재 비밀번호가 올바르지 않습니다.' }); }
+      loginFails.delete(fk);
     }
     let email; // undefined = 변경 없음, '' = 지움
     if (b.email !== undefined) {
@@ -55,7 +60,7 @@ export function registerMeRoutes(app) {
     }
     // ---- 반영 ----
     if (stored) {
-      if (wantName) stored.username = b.username.trim();
+      if (wantName) stored.username = b.username.trim().slice(0, 60);
       if (wantPw) {
         stored.salt = crypto.randomBytes(16).toString('hex');
         stored.hash = hashPassword(String(b.password), stored.salt);
@@ -80,7 +85,11 @@ export function registerMeRoutes(app) {
     if (req.user.role === 'admin') return res.status(400).json({ error: '관리자 계정은 삭제할 수 없습니다.' });
     const stored = users.find((x) => x.id === req.user.id);
     if (!stored) return res.status(404).json({ error: 'not found' });
-    if (!verifyPassword(stored, String((req.body && req.body.password) || ''))) return res.status(400).json({ error: '비밀번호가 올바르지 않습니다.' });
+    const fk = 'pw|' + stored.id;
+    const wait = failLocked(fk);
+    if (wait) return res.status(429).json({ error: `비밀번호 확인 시도가 너무 많습니다. ${wait}초 후 다시 시도하세요.` });
+    if (!verifyPassword(stored, String((req.body && req.body.password) || ''))) { failNote(fk); return res.status(400).json({ error: '비밀번호가 올바르지 않습니다.' }); }
+    loginFails.delete(fk);
     deleteUserAccount(stored.id);
     console.log(`[auth] 본인 탈퇴 user=${stored.id}`);
     clearAuthCookie(res);

@@ -5,6 +5,12 @@ import { getSession, newId } from '../store/sessions.js';
 import { requireAuth, viewerAccessOk, hasPerm, findUser, canUseSession } from '../auth/index.js';
 import { rooms, broadcast, closeSessionRoom } from '../realtime/rooms.js';
 
+// 제목·입력 언어는 글자만 받는다. 예전엔 만들 때 형식을 확인하지 않아, 글자가 아닌 값(객체 등)을 제목으로 넣으면
+// 그 제목을 그리는 관리자 기록 화면이 멈췄다(2026-11-12 보안 점검).
+const TITLE_MAX = 200;
+const cleanTitle = (v) => (typeof v === 'string' ? v.replace(/\p{Cc}+/gu, ' ').trim().slice(0, TITLE_MAX) : '');
+const cleanInLang = (v) => (typeof v === 'string' && /^(auto|[a-z]{2,3}(-[A-Za-z]{2,4})?)$/.test(v) ? v : null);
+
 export function registerSessionRoutes(app) {
   /* ---- 세션 REST API ---- */
   app.get('/api/sessions', requireAuth, (req, res) => {
@@ -67,14 +73,14 @@ export function registerSessionRoutes(app) {
     const s = {
       id: newId(),
       owner: req.user.id, // 소유자
-      title: b.title || '새 세션',
+      title: cleanTitle(b.title) || '새 세션',
       createdAt: now,
       updatedAt: now,
       pipeline, // 생성 후 변경 불가
       ...(mode ? { preset: mode.preset, src: mode.src } : {}),
       langs,
       outLang,
-      inLang: b.inLang || 'auto',
+      inLang: cleanInLang(b.inLang) || 'auto',
       items: [],
     };
     sessions.push(s);
@@ -121,8 +127,8 @@ export function registerSessionRoutes(app) {
     if (!canUseSession(req.user, s)) return res.status(403).json({ error: 'forbidden' });
     // pipeline 은 생성 시 고정. title·inLang 수정 허용. outLang 은 translate 의 타깃 변경용.
     const b = req.body || {};
-    if (typeof b.title === 'string') s.title = b.title;
-    if (typeof b.inLang === 'string') s.inLang = b.inLang;
+    if (typeof b.title === 'string') s.title = cleanTitle(b.title) || s.title;
+    if (cleanInLang(b.inLang)) s.inLang = b.inLang;
     // 뷰어(QR) 음성 듣기 허용 — 끄면 뷰어의 듣기 버튼이 사라지고 서버도 뷰어용 음성을 만들지 않는다
     if (typeof b.viewerTts === 'boolean' && s.pipeline === 'soniox') {
       s.viewerTts = b.viewerTts;

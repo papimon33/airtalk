@@ -2,7 +2,7 @@
 import crypto from 'crypto';
 import { ADMIN_ID } from '../../config.js';
 import { users, sessions, setSessions, profiles, col, profilesCol, saveUsers, deleteUserStore, saveSessions, deleteSessionStore, deleteProfileStore } from '../../store/index.js';
-import { requireAdmin, makeUser, hashPassword, closeAllLogins, cleanPerms, PASSWORD_MIN_LEN } from '../../auth/index.js';
+import { requireAdmin, makeUser, hashPassword, closeAllLogins, revokeUserConnections, cleanPerms, PASSWORD_MIN_LEN, LOGIN_ID_MAX } from '../../auth/index.js';
 import { closeSessionRoom } from '../../realtime/rooms.js';
 
 // 사용자 계정 완전 삭제 — 관리자 삭제(DELETE /api/admin/users/:id)·본인 탈퇴(DELETE /api/me) 공용.
@@ -21,6 +21,7 @@ export function deleteUserAccount(id) {
     if (!col) saveSessions();
   }
   if (profiles.delete(id) || profilesCol) deleteProfileStore(id);
+  revokeUserConnections(id); // 이 계정의 로그인으로 열린 나머지 연결(자기 것이 아닌 세션에 붙은 것 포함)도 닫는다 — 소유 세션의 연결은 위에서 이미 닫혔다
 }
 
 export function registerAccountRoutes(app) {
@@ -37,9 +38,10 @@ export function registerAccountRoutes(app) {
   app.post('/api/admin/users', requireAdmin, (req, res) => {
     const b = req.body || {};
     const id = String(b.id || '').trim();
-    const username = String(b.username || '').trim();
+    const username = String(b.username || '').trim().slice(0, 60);
     const password = String(b.password || '');
     if (!id || !password) return res.status(400).json({ error: 'ID 와 비밀번호는 필수입니다.' });
+    if (id.length > LOGIN_ID_MAX || /[\s\p{Cc}]/u.test(id)) return res.status(400).json({ error: `ID 는 공백 없이 ${LOGIN_ID_MAX}자까지 쓸 수 있습니다.` });
     if (password.length < PASSWORD_MIN_LEN) return res.status(400).json({ error: `비밀번호는 ${PASSWORD_MIN_LEN}자 이상이어야 합니다.` });
     if (id === ADMIN_ID || users.some((u) => u.id === id))
       return res.status(409).json({ error: '이미 존재하는 ID 입니다.' });

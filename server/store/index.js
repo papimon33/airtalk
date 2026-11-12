@@ -53,6 +53,17 @@ export let appSettings = { refineModel: '' };
 // 사용자 프로필: userId -> { id, email, prefs, updatedAt }. users 와 분리한 이유 — 관리자는 env 기반 가상 사용자라
 // users 에 없지만 이메일·환경설정(폰 앱 계정 화면)은 저장돼야 한다. Map 인 이유: id 가 '__proto__' 여도 안전.
 export let profiles = new Map();
+// 보안 설정(관리자 2단계 인증 시크릿) — DB 모드에서는 여기(DB)에 둔다. 예전엔 서버의 파일(data/security.json)에만 있어서,
+// 디스크가 유지되지 않는 호스팅에서는 재배포 때마다 2단계 인증이 꺼졌다(2026-11-12 보안 점검).
+export let securityDoc = null;        // DB 에서 읽은 값(없으면 null)
+export let securityDocError = false;  // 읽었지만 풀 수 없었다 — 인증 쪽이 관리자 로그인을 막는다
+export const mongoMode = () => !!termsConfigCol;
+export async function persistSecurityDoc(obj) {
+  if (!termsConfigCol) return false;
+  const body = dataKey ? { enc: encryptData(dataKey, JSON.stringify(obj)) } : { ...obj };
+  await termsConfigCol.replaceOne({ _id: 'security' }, { _id: 'security', ...body }, { upsert: true });
+  return true;
+}
 export let col = null;     // Mongo sessions 컬렉션. null 이면 파일 모드.
 let usersCol = null;
 let usageCol = null;
@@ -98,6 +109,11 @@ export async function loadStore() {
         if (tc) { const { _id, ...rest } = tc; termsConfig = { ...rest, updatedAt: tc.updatedAt || 0 }; } // 전체 보존(entries/servedLangs/categoryScope), 구형은 부팅 마이그레이션
         const as = await termsConfigCol.findOne({ _id: 'appSettings' }); // 같은 컬렉션의 다른 문서(용어 설정은 'singleton')
         if (as) { const { _id, ...rest } = as; appSettings = { ...appSettings, ...rest }; }
+        const sec = await termsConfigCol.findOne({ _id: 'security' }); // 관리자 2단계 인증 시크릿
+        if (sec) {
+          try { const { _id, ...rest } = sec; securityDoc = rest.enc ? JSON.parse(decryptData(dataKey, rest.enc)) : rest; }
+          catch (e) { securityDocError = true; console.error('[store] 보안 설정을 읽지 못했습니다(DATA_KEY 확인)', e.message || e); }
+        }
         const vu = await vendorUsageCol.findOne({ _id: 'singleton' });
         if (vu) vendorUsage = { soniox: vu.soniox || {}, cartesia: vu.cartesia || {}, openai: vu.openai || {}, cartesiaSelf: vu.cartesiaSelf || {} };
         profiles = new Map((await profilesCol.find({}, { projection: { _id: 0 } }).toArray()).filter((p) => p && p.id).map((p) => [p.id, p]));
@@ -106,6 +122,7 @@ export async function loadStore() {
       } catch (e) {
         console.error(`[store] MongoDB 연결 실패 (시도 ${attempt}/3): ${e.message}`);
         col = usersCol = usageCol = usageHourlyCol = termsConfigCol = vendorUsageCol = profilesCol = null;
+        securityDoc = null; securityDocError = false;
         if (attempt < 3) await new Promise((r) => setTimeout(r, 2000));
       }
     }
@@ -158,14 +175,18 @@ export async function persistVendorUsage() {
 
 let saveTimer = null;
 export const dirtySessions = new Set(); // Mongo 모드: 변경 세션만 upsert — 발화 확정마다 전체 재기록하던 쓰기 증폭 방지
-export let sessionsFlushInflight = null; // 진행 중 flush 추적 — 삭제가 완료를 기다려 '삭제 후 upsert 부활' 레이스 차단
+/* 저장은 한 번에 하나씩 차례로 돈다(sessionsFlushChain). 예전엔 '진행 중 저장'을 변수 하나로만 기억해서,
+   저장이 400ms 보다 오래 걸려 두 개가 겹치면 먼저 끝난 쪽이 그 표시를 지웠다 — 삭제가 아직 도는 저장을 기다리지 않고 지나가,
+   늦게 도착한 저장이 방금 지운 세션을 DB 에 되살릴 수 있었다(2026-11-12 보안 점검). 파일 모드의 임시 파일 겹쳐 쓰기도 같이 막는다. */
+let sessionsFlushChain = Promise.resolve();
+export let sessionsFlushInflight = null; // 줄 서 있거나 도는 저장이 있으면 그 약속(없으면 null)
 export function saveSessions(id) {
   if (id) dirtySessions.add(id);
   else for (const s of sessions) dirtySessions.add(s.id); // 인자 없으면 전체(드문 관리자·마이그레이션 경로)
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    sessionsFlushInflight = flushSessions()
+    const run = sessionsFlushChain.then(() => flushSessionsNow())
       // 저장이 죽어도 화면은 정상으로 보인다 — 관리자 > 시스템·보안(/api/admin/health)에 노출해
       // 응대 기록이 사라지고 있다는 사실을 운영 중에 알 수 있게 한다.
       .then(() => { metrics.saveFail = null; })
@@ -174,10 +195,19 @@ export function saveSessions(id) {
         const msg = String((e && e.message) || e).slice(0, 300);
         metrics.saveFail = { at: Date.now(), msg, count: ((metrics.saveFail || {}).count || 0) + 1 };
       })
-      .finally(() => { sessionsFlushInflight = null; });
+      .finally(() => { if (sessionsFlushInflight === run) sessionsFlushInflight = null; }); // 내 뒤에 줄 선 저장이 있으면 그 표시는 건드리지 않는다
+    sessionsFlushChain = run;
+    sessionsFlushInflight = run;
   }, 400);
 }
-export async function flushSessions() {
+export const sessionFlushesDone = () => sessionsFlushChain.catch(() => {}); // 시작됐거나 줄 선 저장이 모두 끝날 때까지
+// 바깥에서 부르는 저장(종료 직전 등)도 같은 줄에 선다
+export function flushSessions() {
+  const run = sessionsFlushChain.then(() => flushSessionsNow());
+  sessionsFlushChain = run.catch(() => {});
+  return run;
+}
+async function flushSessionsNow() {
   const ids = new Set(dirtySessions);
   dirtySessions.clear();
   if (col) {
@@ -199,7 +229,9 @@ export async function deleteSessionStore(id) {
   dirtySessions.delete(id);
   if (col) {
     try {
-      if (sessionsFlushInflight) await sessionsFlushInflight; // 디바운스 flush 의 upsert 가 삭제를 되돌리지 않게 완료 대기
+      // 이미 시작됐거나 줄 선 저장이 모두 끝난 뒤에 지운다 — 그 저장들의 upsert 가 삭제를 되돌리지 않게.
+      // (이 세션은 메모리 목록에서 먼저 빠졌으므로, 이 뒤에 시작하는 저장은 이 세션을 다시 쓰지 않는다)
+      await sessionsFlushChain.catch(() => {});
       await col.deleteOne({ id });
     } catch (e) {
       console.error('[sessions] 삭제 실패', e);
@@ -243,18 +275,21 @@ export async function deleteUserStore(id) {
 /* ---- 사용자 프로필(이메일·환경설정) 저장 — users 와 같은 디바운스, Mongo 는 변경 문서만 upsert ---- */
 let profileSaveTimer = null;
 const dirtyProfiles = new Set();
-let profilesFlushInflight = null; // 삭제가 진행 중 upsert 완료를 기다려 '삭제 후 부활' 레이스 차단(세션 저장과 동일)
+let profilesFlushChain = Promise.resolve(); // 세션 저장과 같은 이유로 한 번에 하나씩(삭제 후 부활 방지)
 export function saveProfiles(id) {
   if (id) dirtyProfiles.add(id);
   if (profileSaveTimer) return;
   profileSaveTimer = setTimeout(() => {
     profileSaveTimer = null;
-    profilesFlushInflight = flushProfiles()
-      .catch((e) => console.error('[profiles] 저장 실패', e))
-      .finally(() => { profilesFlushInflight = null; });
+    profilesFlushChain = profilesFlushChain.then(() => flushProfilesNow()).catch((e) => console.error('[profiles] 저장 실패', e));
   }, 400);
 }
-export async function flushProfiles() {
+export function flushProfiles() {
+  const run = profilesFlushChain.then(() => flushProfilesNow());
+  profilesFlushChain = run.catch(() => {});
+  return run;
+}
+async function flushProfilesNow() {
   const ids = new Set(dirtyProfiles);
   dirtyProfiles.clear();
   if (profilesCol) {
@@ -270,7 +305,7 @@ export async function deleteProfileStore(id) {
   dirtyProfiles.delete(id);
   if (profilesCol) {
     try {
-      if (profilesFlushInflight) await profilesFlushInflight;
+      await profilesFlushChain.catch(() => {});
       await profilesCol.deleteOne({ id });
     } catch (e) {
       console.error('[profiles] 삭제 실패', e);

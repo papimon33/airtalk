@@ -26,7 +26,7 @@ http.createServer((req, res) => {
 }).listen(3013, '127.0.0.1');
 const child = spawn(process.execPath, ['server.js'], {
   cwd: ROOT, stdio: 'inherit',
-  env: { ...process.env, PORT: '3012', NODE_ENV: 'test', MONGODB_URI: '', DATA_DIR: dataDir, OPENAI_API_KEY: 'sk-dummy-test', SONIOX_API_KEY: 'test-soniox-key', SONIOX_WS_URL: fake.url, CARTESIA_API_KEY: '', DATA_KEY: '', ADMIN_ID: 'admin', ADMIN_PASSWORD: 'admin', ADMIN_TOTP_SECRET: '' },
+  env: { ...process.env, PORT: '3012', HOST: '127.0.0.1', NODE_ENV: 'test', MONGODB_URI: '', DATA_DIR: dataDir, OPENAI_API_KEY: 'sk-dummy-test', SONIOX_API_KEY: 'test-soniox-key', SONIOX_WS_URL: fake.url, CARTESIA_API_KEY: '', DATA_KEY: '', ADMIN_ID: 'admin', ADMIN_PASSWORD: 'admin', ADMIN_TOTP_SECRET: '' },
 });
 const bye = () => { try { child.kill('SIGKILL'); } catch {} fs.rmSync(dataDir, { recursive: true, force: true }); process.exit(0); };
 process.on('SIGTERM', bye);

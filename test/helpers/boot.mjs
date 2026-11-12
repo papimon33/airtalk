@@ -25,6 +25,7 @@ export async function bootServer(extraEnv = {}) {
     env: {
       ...process.env,
       PORT: String(port),
+      HOST: '127.0.0.1', // 이 PC 안에서만 닿게(기본 관리자 비밀번호로 뜨는 테스트 서버)
       NODE_ENV: 'test',
       MONGODB_URI: '',
       DATA_DIR: dataDir,

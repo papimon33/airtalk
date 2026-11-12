@@ -57,7 +57,19 @@
 - 옵션 숨김 토글: 콘텐츠 중앙·헤더 밀착 탭(공간 미차지, 숨김 시 opacity 0.4). 텍스트 크기 슬라이더(고급설정, `kac-font-scale`).
 
 ## 운영/보안 (docs/SECURITY_GUIDE.md 참고)
-- `FORCE_HTTPS=1` http→https 리다이렉트. 관리자 **2FA(TOTP)**: env `ADMIN_TOTP_SECRET` 우선, 아니면 관리자>시스템·보안에서 설정(data/security.json). 로그인 시 `need2fa` 응답 → Login.jsx 코드 입력. `DATA_KEY` 설정 시 data/*.json **AES-256-GCM 암호화**(평문 하위호환, security_util.js).
+- **보안 점검 반영(2026-11-12, Cloudflare security-audit 스킬 결과 — 테스트 `test/security-audit.test.mjs`·`test/mongo-mode.test.mjs`)**:
+  - **계정 간 격리**: 세션을 여는 모든 길(읽기 `GET /api/sessions/:id`·QR·`/ws/host`·토큰 없는 `/ws/viewer`)이 `canUseSession`(주인 또는 관리자)을 쓴다. 예전엔 일반 세션은 로그인만 하면 통과했다. 참가 토큰(QR)이 있으면 누구든 뷰어는 된다. 없는 세션에는 호스트·뷰어 모두 붙을 수 없다.
+  - **번역 방식은 세션에 저장된 값만**: `/ws/host` 주소의 `pipeline` 값은 받지 않는다(`realtime/host.js`). `src=guestmic` 은 안내데스크 세션에서만.
+  - **로그인이 끝나면 연결도 닫힌다**: 로그아웃·비밀번호 변경·계정 삭제 시 `onLoginRevoked`(auth) → 그 로그인으로 열린 호스트·뷰어 소켓을 닫는다(종료 코드 4401). '다른 기기 로그인(replaced)'은 예전처럼 번역을 끊지 않는다. 끝난 토큰은 `logins[kind].gone` 에 남아 `replaced` 로 잘못 읽히지 않는다.
+  - **관리자 2단계 인증**: 시크릿을 DB 모드에서는 DB(`termsConfig` 컬렉션 `_id:'security'`)에 둔다 — 예전엔 `data/security.json` 뿐이라 Render 재배포 때마다 꺼졌다(파일에만 있던 값은 첫 부팅 때 DB 로 옮김). 켜져 있으면 새로 설정할 수 없고(먼저 현재 코드로 해제), 켜는 순간 다른 관리자 기기는 로그아웃. 설정을 읽지 못하면 관리자 로그인을 막는다(503).
+  - **관리자 비밀번호 교체**: 프로필에 비밀번호 지문(`pwFp`)을 두고, 부팅 때 달라졌으면 예전 관리자 로그인을 모두 끝낸다(`adminCredentialCheck`).
+  - **횟수·크기 제한**: `/desk.webmanifest` 도 참여 코드 틀린 횟수 제한을 쓴다. 뷰어의 `role=host`(상한 제외)는 로그인한 주인·관리자 연결만. 용어집 16MB 본문은 관리자 확인 뒤에만 읽는다(`routes/terms.js`). 로그인 실패 기록은 ID 64자·전체 5,000건 상한. 본인 비밀번호 재확인(`/api/me`)도 15분 8회 제한. 설치 파일 받기는 주소당 10분 40회. 구 translate 대기 큐는 4MB 상한.
+  - **접속 주소**: `TRUST_PROXY`(기본 1)로 프록시 단계 수를 정한다. WebSocket 쪽도 같은 규칙(`util/net_util.js clientIp`). 관리자 > 시스템에 '서버가 본 내 접속 주소'가 나온다 — 내 공인 IP 와 다르면 값을 고친다.
+  - **다른 출처 차단**: CSRF 검사는 `Origin: null`·대문자 경로(`/API/..`)도 막고, WebSocket 연결도 Origin 이 있으면 같은 출처만 받는다.
+  - **저장 순서**: 세션·프로필 저장은 한 번에 하나씩 차례로 돈다(`sessionsFlushChain`). 삭제는 줄 선 저장이 끝난 뒤 실행 — 늦은 upsert 가 지운 세션을 되살리지 않는다.
+  - **그 밖**: 세션 제목·입력 언어는 글자만(부팅 때 기존 값 정리), 번역문 정리(`sanitizeTranslation`)는 길이 8,000자·긴 공백 축약 후 처리, `AUTH_SECRET` 미설정 시 파생은 scrypt, 테스트 서버는 127.0.0.1 로만 뜬다(`HOST`).
+  - **남은 것(결정 필요)**: 안드로이드 앱 WebView 의 접속 주소 제한(앱 빌드·배포 필요), 안내데스크 참여 코드 교체 기능, 외부 CDN 글꼴·스타일의 무결성 표시/CSP, 로그인 비밀번호 해시를 비동기로, 계정당 동시 번역 수 제한.
+- `FORCE_HTTPS=1` http→https 리다이렉트. 관리자 **2FA(TOTP)**: env `ADMIN_TOTP_SECRET` 우선, 아니면 관리자>시스템·보안에서 설정(DB 모드는 DB, 파일 모드는 data/security.json). 로그인 시 `need2fa` 응답 → Login.jsx 코드 입력. `DATA_KEY` 설정 시 data/*.json **AES-256-GCM 암호화**(평문 하위호환, security_util.js).
 - 관리자 탭: **데스크 통계**(GET /api/admin/desk-stats — deskLog 기반 응대수·언어분포·평균시간(deskLog.startedAt)·일별, 대화 내용 미노출) / **시스템·보안**(GET /api/admin/health — 가동시간·연결수·보안상태·최근 서버/브라우저 오류, POST /api/client-log 수집).
 - **오번역 검사**: 관리자>용어 설정 → '최근 전체 검사' 또는 '대상 선택…'(세션·안내데스크 체크) → POST /api/admin/terms-suggest {sessionIds?} (일반 대화 + 데스크 응대 로그 원문·번역 200쌍을 GPT 검수 → 용어 후보 추천 → '추가'로 translationTerms 반영).
 - **관리자 '로그' 탭**: GET /api/admin/logs(데스크 응대 건 메타 + 세션 메타) / logs/desk/:sid/:idx·logs/session/:id (대화 전문). 건당 시각·길이·언어·문장수·누화드랍 표시, 클릭 시 전문(안내원/손님·마이크/시스템 구분) 펼침.

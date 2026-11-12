@@ -99,8 +99,15 @@ export const PRICE_TRANSLATE_PER_MIN = Number(process.env.PRICE_TRANSLATE_PER_MI
 // 인증: 관리자 계정(env 기반 가상 사용자)·쿠키 서명 키 — 경고·운영 게이트는 auth/index.js authBootCheck()
 export const ADMIN_ID = process.env.ADMIN_ID || 'admin';
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+// AUTH_SECRET 이 없을 때(개발·검증)는 관리자 비밀번호에서 파생한다. 이 키로 서명한 참가 토큰은 로그인 없이 받을 수 있으므로,
+// 빠른 해시로 파생하면 토큰이 관리자 비밀번호의 오프라인 대조표가 된다 — 느린 키 파생(scrypt)을 쓴다. 운영은 부팅 검사가 AUTH_SECRET 을 요구한다.
 export const AUTH_SECRET =
-  process.env.AUTH_SECRET || crypto.createHash('sha256').update('kac::' + ADMIN_PASSWORD).digest('hex');
+  process.env.AUTH_SECRET || crypto.scryptSync('kac::' + ADMIN_PASSWORD, 'airtalk-auth-secret-v2', 32).toString('hex');
+// 앞단 프록시 단계 수(Express 'trust proxy'). 접속 주소(req.ip)가 로그인 잠금·참여 코드·글 입력 횟수 제한의 기준이라
+// 실제 배포의 프록시 수와 맞아야 한다(Render 기본 1). 관리자 > 시스템에서 서버가 본 접속 주소를 확인할 수 있다.
+export const TRUST_PROXY = (() => { const n = Number(process.env.TRUST_PROXY); return Number.isInteger(n) && n >= 0 && n <= 5 ? n : 1; })();
+// 서버가 받을 주소(기본: 전체). 테스트는 127.0.0.1 로 묶어 같은 망의 다른 기기가 테스트 서버(기본 관리자 비밀번호)에 닿지 않게 한다.
+export const LISTEN_HOST = process.env.HOST || '';
 export const AUTH_COOKIE = 'kac_auth';
 
 // 벤더 사용량 조회용 관리자 키(선택) — vendors/usage.js

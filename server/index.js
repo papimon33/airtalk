@@ -6,12 +6,12 @@ import express from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { PORT, STATIC_DIR, SONIOX_API_KEY, CARTESIA_ADMIN_API_KEY, OPENAI_ADMIN_API_KEY } from './config.js';
+import { PORT, STATIC_DIR, SONIOX_API_KEY, CARTESIA_ADMIN_API_KEY, OPENAI_ADMIN_API_KEY, TRUST_PROXY, LISTEN_HOST } from './config.js';
 import { logErr } from './metrics.js';
 import { loadStore, sessions, dirtySessions, flushSessions, flushUsers, flushUsage, flushProfiles } from './store/index.js';
 import { initTermsConfig } from './store/terms.js';
 import { migrateSessions } from './store/sessions.js';
-import { authBootCheck, loadSecurityCfg, migrateUserPerms } from './auth/index.js';
+import { authBootCheck, loadSecurityCfg, migrateUserPerms, adminCredentialCheck } from './auth/index.js';
 import { forceHttps, securityHeaders, csrfGuard } from './auth/middleware.js';
 import { kickVendorRefresh } from './vendors/usage.js';
 import { getLanIp } from './util/net_util.js';
@@ -31,7 +31,7 @@ import { registerMiscRoutes } from './routes/misc.js';
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1); // Render 등 프록시 뒤 — req.ip / x-forwarded-* 신뢰
+app.set('trust proxy', TRUST_PROXY); // Render 등 프록시 뒤 — req.ip 기준(기본 1단계, env TRUST_PROXY)
 
 // FORCE_HTTPS=1: http 접속을 https 로 301 리다이렉트(프록시 뒤에선 x-forwarded-proto 기준).
 // Render 등 관리형 호스팅은 자체적으로 https 를 강제하므로 자가 호스팅에서만 필요.
@@ -41,11 +41,11 @@ if (process.env.FORCE_HTTPS === '1') app.use(forceHttps); // auth/middleware.js
 app.use(securityHeaders);
 // CSRF 완화: /api 의 상태변경 요청은 동일 출처만 허용(쿠키 인증 보호)
 app.use(csrfGuard);
-// JSON 바디 한도 차등: 기본 256kb(무인증 엔드포인트 대용량 파싱 DoS 방지),
-// 용어집 CSV 업로드(수천 행)가 오는 /api/terms-config 만 16mb 허용.
-const bigJson = express.json({ limit: '16mb' });
+// JSON 바디 한도: 기본 256kb(무인증 엔드포인트 대용량 파싱 DoS 방지).
+// 용어집 업로드(PUT /api/terms-config, 수천 행)만 16mb 인데, 그 파서는 관리자 확인 뒤에 라우트에서 돈다(routes/terms.js) —
+// 예전엔 주소만 보고 여기서 16mb 를 읽어, 로그인하지 않은 요청도 16mb 까지 메모리에 올렸다(2026-11-12 보안 점검).
 const smallJson = express.json({ limit: '256kb' });
-app.use((req, res, next) => (req.path === '/api/terms-config' ? bigJson : smallJson)(req, res, next));
+app.use((req, res, next) => (req.method === 'PUT' && req.path === '/api/terms-config' ? next() : smallJson(req, res, next)));
 // 빌드된 React 앱(dist) 서빙
 if (!fs.existsSync(STATIC_DIR)) {
   console.warn('\n[경고] dist 폴더가 없습니다. 먼저 `npm run build` 를 실행하세요. (npm start 는 자동 빌드)\n');
@@ -81,7 +81,8 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('unhandledRejection', (e) => logErr('unhandledRejection', e));
 
-loadSecurityCfg(); // 관리자 2FA 시크릿(data/security.json)
+loadSecurityCfg(); // 관리자 2단계 인증 시크릿(DB 모드는 DB, 파일 모드는 data/security.json)
+adminCredentialCheck(); // 관리자 비밀번호가 바뀌었으면 예전 관리자 로그인을 끝낸다
 
 /* ---- REST 라우트 — 구 server.js 와 같은 등록 순서 ---- */
 registerMeRoutes(app);
@@ -110,7 +111,7 @@ app.get('*', (req, res, next) => {
 // WebSocket(/ws/host·/ws/viewer) 업그레이드·하트비트 — realtime/index.js
 attachRealtime(server);
 
-server.listen(PORT, () => {
+server.listen(PORT, ...(LISTEN_HOST ? [LISTEN_HOST] : []), () => {
   const ip = getLanIp();
   console.log(`\n  AirTalk 서버 실행 중`);
   console.log(`  · 데스크톱:  http://localhost:${PORT}`);

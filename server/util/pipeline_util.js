@@ -227,7 +227,9 @@ export function langScriptOk(out, raw, lang) {
 
 /* ── GPT 번역 출력 정제 ── */
 export function sanitizeTranslation(out) {
-  let s = String(out || '').trim();
+  // 길이 상한 + 줄 안의 긴 공백 줄이기를 먼저 한다 — 아래 패턴들은 공백이 수천 자 이어지면 처리 시간이 급격히 늘어난다
+  // (모델 출력 한 줄이 서버 전체를 멈출 수 있었다. 2026-11-12 보안 점검)
+  let s = String(out || '').slice(0, 8000).replace(/[^\S\n]{2,}/g, ' ').trim();
   if (!s) return '';
   // 코드블록 제거
   s = s.replace(/^```[a-zA-Z]*\s*/, '').replace(/```$/, '').trim();

@@ -3,8 +3,8 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { DATA_DIR, ADMIN_ID, AUTH_SECRET, AUTH_COOKIE } from '../config.js';
-import { users, profiles, readDataFile, writeDataFile, saveProfiles, saveUsers } from '../store/index.js';
+import { DATA_DIR, ADMIN_ID, ADMIN_PASSWORD, AUTH_SECRET, AUTH_COOKIE } from '../config.js';
+import { users, profiles, readDataFile, writeDataFile, saveProfiles, saveUsers, securityDoc, securityDocError, mongoMode, persistSecurityDoc } from '../store/index.js';
 
 /* ================================================================== */
 /*  인증 (사용자 계정 + 관리자) — 호스트(데스크톱)만 보호               */
@@ -89,7 +89,10 @@ export function findUser(id) {
 /* ---- 로그인 토큰 + 로그인 자리(2026-10-27) ----
    계정당 PC 1대 + 폰 1대. 같은 종류에서 새로 로그인하면 이전 기기의 토큰은 무효(reason: replaced),
    비밀번호를 바꾸면 전부 무효(reason: password). 자리는 프로필(profiles[id].logins)에 둔다 — 관리자(가상 사용자)도 같다.
-     logins[kind] = { jti, at, prev: { jti, reason } }   (prev = 마지막으로 끊긴 토큰 — 로그아웃 이유 안내용)
+     logins[kind] = { jti, at, prev: { jti, reason }, gone: [{ jti, reason }] }
+       prev = 마지막으로 끊긴 토큰(로그아웃 이유 안내용)
+       gone = 로그아웃·비밀번호 변경으로 끝난 토큰들(최근 12개). 예전엔 prev 한 칸뿐이라, 그 뒤 로그인이 두 번 더 있으면
+              끝난 토큰이 '다른 기기 로그인으로 밀려난 것(replaced)'으로 잘못 읽혀 번역 중 재접속 유예를 통과할 수 있었다(2026-11-12 보안 점검).
    토큰 형식: id.kind.jti.발급ms.hmac, 30일 후 만료. 구 형식(id.발급ms.hmac)은 검증 실패로 자연 로그아웃(1회 재로그인). */
 const TOKEN_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 export const DEVICE_KINDS = ['pc', 'phone'];
@@ -131,12 +134,20 @@ export function activeLogin(id, kind) {
   return !!(s && s.jti && Date.now() - s.at < TOKEN_MAX_AGE_MS);
 }
 // 새 로그인 — 같은 종류의 이전 토큰은 무효가 된다. 새 jti 를 돌려준다.
+const GONE_KEEP = 12;
+const goneWith = (slot, jti, reason) => [...((slot && Array.isArray(slot.gone) && slot.gone) || []), { jti, reason }].slice(-GONE_KEEP);
+// 로그인이 끝났을 때(로그아웃·비밀번호 변경·계정 삭제) 알림 — 실시간 쪽(realtime/index.js)이 그 로그인으로 열린 연결을 닫는다.
+// 예전엔 쿠키만 무효가 되고 이미 열린 연결은 계속 번역(과금)·수신했다(2026-11-12 보안 점검). jtis=null 이면 그 계정의 연결 전부.
+const revokeListeners = [];
+export function onLoginRevoked(fn) { revokeListeners.push(fn); }
+function emitRevoked(id, jtis) { for (const fn of revokeListeners) { try { fn(id, jtis); } catch (e) { console.error('[auth] 연결 정리 실패', e); } } }
+export function revokeUserConnections(id) { emitRevoked(id, null); }
 export function openLogin(id, kind) {
   const logins = loginsOf(id, true);
   const cur = logins[kind];
   const jti = crypto.randomBytes(9).toString('base64url');
   const prev = cur && cur.jti ? { jti: cur.jti, reason: 'replaced' } : cur && cur.prev;
-  logins[kind] = { jti, at: Date.now(), ...(prev ? { prev } : {}) };
+  logins[kind] = { jti, at: Date.now(), ...(prev ? { prev } : {}), ...(cur && Array.isArray(cur.gone) && cur.gone.length ? { gone: cur.gone } : {}) };
   saveProfiles(id);
   return jti;
 }
@@ -144,17 +155,20 @@ export function closeLogin(id, kind, jti) {
   const logins = loginsOf(id);
   const s = logins && logins[kind];
   if (!s || s.jti !== jti) return;
-  logins[kind] = { jti: null, at: 0, prev: { jti, reason: 'logout' } };
+  logins[kind] = { jti: null, at: 0, prev: { jti, reason: 'logout' }, gone: goneWith(s, jti, 'logout') };
   saveProfiles(id);
+  emitRevoked(id, [jti]);
 }
 // 비밀번호 변경 등: 모든 기기 로그아웃
 export function closeAllLogins(id, reason) {
   const logins = loginsOf(id, true);
+  const ended = [];
   for (const k of DEVICE_KINDS) {
     const s = logins[k];
-    if (s && s.jti) logins[k] = { jti: null, at: 0, prev: { jti: s.jti, reason } };
+    if (s && s.jti) { ended.push(s.jti); logins[k] = { jti: null, at: 0, prev: { jti: s.jti, reason }, gone: goneWith(s, s.jti, reason) }; }
   }
   saveProfiles(id);
+  if (ended.length) emitRevoked(id, ended);
 }
 export function setAuthCookie(req, res, id, kind, remember = true) {
   const jti = openLogin(id, kind);
@@ -174,7 +188,8 @@ export function authFromReq(req, { grace } = {}) {
   const s = (loginsOf(t.id) || {})[t.kind];
   if (s && s.jti === t.jti) return { user, kind: t.kind, jti: t.jti };
   // 이유: 마지막으로 끊긴 토큰이면 그 이유, 아니면 그 자리에 다른 기기가 있을 때만 replaced(자리 기록이 없으면 이유 없이 로그아웃)
-  const reason = s && s.prev && s.prev.jti === t.jti ? s.prev.reason : s && s.jti ? 'replaced' : undefined;
+  const gone = s && Array.isArray(s.gone) ? s.gone.find((g) => g.jti === t.jti) : null; // 로그아웃·비밀번호 변경으로 끝난 토큰은 끝까지 그 이유로 남는다
+  const reason = gone ? gone.reason : s && s.prev && s.prev.jti === t.jti ? s.prev.reason : s && s.jti ? 'replaced' : undefined;
   if (grace && grace(t, reason)) return { user, kind: t.kind, jti: t.jti, replaced: true };
   return { user: null, ...(reason && reason !== 'logout' ? { reason } : {}) };
 }
@@ -226,11 +241,44 @@ export function clearAuthCookie(res) {
 const SECURITY_FILE = path.join(DATA_DIR, 'security.json');
 export let securityCfg = { adminTotpSecret: '' };
 // 부팅 시 1회(index.js — 구 server.js 와 같은 시점): data/security.json 로드
+// 저장된 설정을 읽지 못했으면 true — '2단계 인증 없음'으로 넘어가지 않고 관리자 로그인을 막는다(로그인 라우트).
+// (예전엔 파일이 없거나 깨지면 조용히 2단계 인증이 꺼진 채로 떴다. 2026-11-12 보안 점검)
+export let securityLoadFailed = false;
+// 부팅 시 1회(index.js, 저장소 로드 뒤): DB 모드는 DB 의 값, 파일 모드는 data/security.json.
+// DB 모드인데 DB 에 없고 예전 파일만 있으면 그 값을 DB 로 옮긴다.
 export function loadSecurityCfg() {
-  try { if (fs.existsSync(SECURITY_FILE)) securityCfg = { ...securityCfg, ...JSON.parse(readDataFile(SECURITY_FILE)) }; } catch (e) { console.error('[2fa] security.json 로드 실패', e.message); }
+  if (securityDocError) { securityLoadFailed = true; return; }
+  if (securityDoc) { securityCfg = { ...securityCfg, ...securityDoc }; return; }
+  try {
+    if (fs.existsSync(SECURITY_FILE)) {
+      securityCfg = { ...securityCfg, ...JSON.parse(readDataFile(SECURITY_FILE)) };
+      if (mongoMode() && securityCfg.adminTotpSecret) persistSecurityDoc(securityCfg).catch((e) => console.error('[2fa] DB 로 옮기지 못했습니다', e.message || e));
+    }
+  } catch (e) { securityLoadFailed = true; console.error('[2fa] security.json 로드 실패 — 관리자 로그인을 막습니다', e.message); }
 }
-export function saveSecurityCfg() { try { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true }); writeDataFile(SECURITY_FILE, JSON.stringify(securityCfg, null, 2)); } catch (e) { console.error('[2fa] 저장 실패', e); } }
+// 저장에 성공했으면 true. 실패하면 라우트가 화면에 알린다(예전엔 실패해도 성공으로 답했다).
+export async function saveSecurityCfg() {
+  try {
+    if (mongoMode()) return await persistSecurityDoc(securityCfg);
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    writeDataFile(SECURITY_FILE, JSON.stringify(securityCfg, null, 2));
+    return true;
+  } catch (e) { console.error('[2fa] 저장 실패', e); return false; }
+}
 export const adminTotpSecret = () => process.env.ADMIN_TOTP_SECRET || securityCfg.adminTotpSecret || '';
+
+/* 관리자 비밀번호(환경변수)가 바뀌면 그 전에 로그인해 둔 관리자 기기를 모두 로그아웃한다 — 부팅 시 1회(index.js).
+   관리자는 저장된 계정이 아니라서 '비밀번호 변경 → 전체 로그아웃'이 적용되지 않았고, AUTH_SECRET 이 고정이면
+   비밀번호를 바꿔도 예전 로그인 쿠키가 30일까지 그대로 통했다(2026-11-12 보안 점검). 비밀번호 자체가 아니라 지문만 프로필에 둔다. */
+export function adminCredentialCheck() {
+  const fp = crypto.createHmac('sha256', AUTH_SECRET).update('admin-pw:' + ADMIN_PASSWORD).digest('hex').slice(0, 24);
+  let p = profiles.get(ADMIN_ID);
+  if (!p) { p = { id: ADMIN_ID, email: '', prefs: {} }; profiles.set(ADMIN_ID, p); }
+  if (p.pwFp === fp) return;
+  if (p.pwFp) { closeAllLogins(ADMIN_ID, 'password'); console.log('[auth] 관리자 비밀번호가 바뀌어 기존 관리자 로그인을 모두 끝냈습니다.'); }
+  p.pwFp = fp;
+  saveProfiles(ADMIN_ID);
+}
 
 // 로그인 무차별 대입 방어: (IP+ID) 조합당 15분 내 8회 실패 시 15분 잠금.
 //  ── IP 단독으로 잠그면 공항 사내 NAT(직원 수십 명이 같은 공인 IP)에서 한 명의 오타가
@@ -241,8 +289,33 @@ export const loginFails = new Map(); // "ip|id" -> { count, first, lockUntil }
 export function loginIp(req) {
   return String(req.ip || (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket.remoteAddress || 'ip').trim();
 }
+export const LOGIN_ID_MAX = 64; // 계정 ID 길이 상한 — 만들 때도 같은 상한(routes/admin/accounts.js)
 export function loginKey(req, id) {
-  return loginIp(req) + '|' + String(id || '').trim().toLowerCase();
+  return loginIp(req) + '|' + String(id || '').trim().toLowerCase().slice(0, LOGIN_ID_MAX);
+}
+// 실패 기록 정리: 기한 지난 것을 지우고, 그래도 많으면 오래된 것부터 버린다(메모리 상한).
+// 예전엔 2000건을 넘어야만 청소했고 키(ID)에 길이 제한이 없어, 로그인하지 않은 요청이 큰 문자열을 15분씩 쌓을 수 있었다(2026-11-12 보안 점검).
+const LOGIN_FAILS_MAX = 5000;
+let loginFailsSwept = 0;
+export function sweepLoginFails(now = Date.now()) {
+  if (loginFails.size < 200 && now - loginFailsSwept < 60000) return;
+  loginFailsSwept = now;
+  for (const [k, v] of loginFails) { if (now - v.first > LOGIN_WINDOW_MS && (!v.lockUntil || now > v.lockUntil)) loginFails.delete(k); }
+  for (const k of loginFails.keys()) { if (loginFails.size <= LOGIN_FAILS_MAX) break; loginFails.delete(k); }
+}
+// 비밀번호 재확인(본인 정보 변경·탈퇴)에도 같은 규칙을 쓴다 — key 예: 'pw|<계정>'
+export function failLocked(key, now = Date.now()) {
+  const r = loginFails.get(key);
+  return r && r.lockUntil && now < r.lockUntil ? Math.ceil((r.lockUntil - now) / 1000) : 0;
+}
+export function failNote(key, now = Date.now()) {
+  sweepLoginFails(now);
+  let r = loginFails.get(key);
+  if (!r || now - r.first > LOGIN_WINDOW_MS) r = { count: 0, first: now, lockUntil: 0 };
+  r.count++;
+  if (r.count >= LOGIN_MAX_FAIL) r.lockUntil = now + LOGIN_WINDOW_MS;
+  loginFails.set(key, r);
+  return r;
 }
 
 /* ---- 뷰어(공개 QR) 접근 토큰 --------------------------------------------
@@ -250,7 +323,7 @@ export function loginKey(req, id) {
    서버가 재계산해 대조한다. 세션마다 고정이라 인쇄 QR 이 계속 유효(데스크 운영과 호환)이고,
    저장/마이그레이션이 필요 없다 — 기존 세션도 자동 적용. 목적: 세션 id 열거로 뷰어를 무단
    개설하는 자동화 접근 차단(자원 고갈형 DoS 는 뷰어 접속 상한이 별도로 막는다).
-   로그인한 직원/관리자는 토큰 없이도 접근 가능(호스트 앱·관리자 화면 그대로 동작). */
+   로그인만으로 토큰 없이 열 수 있는 것은 그 세션의 주인과 관리자뿐이다(호스트 앱·관리자 화면). */
 export function viewerToken(sessionId) {
   return crypto.createHmac('sha256', AUTH_SECRET).update('viewer:' + String(sessionId)).digest('hex').slice(0, 16);
 }
@@ -266,9 +339,9 @@ export function canUseSession(u, s) {
   if (u.role === 'admin') return true;
   return s.owner === u.id && (s.pipeline !== 'desk' || hasPerm(u, 'desk'));
 }
-// 공개 뷰어 라우트 게이트: 유효 토큰 또는 로그인 사용자만 통과. 안내데스크 세션은 로그인만으로는 안 되고 그 세션을 다룰 수 있어야 한다.
+// 공개 뷰어 라우트 게이트: 유효 토큰, 또는 로그인한 그 세션의 주인·관리자만 통과.
+// (예전엔 일반 세션은 로그인만 하면 누구나 통과해, 다른 계정의 대화 기록·참여 코드를 세션 주소만으로 받을 수 있었다. 2026-11-12 보안 점검)
 export function viewerAccessOk(req, sessionId, session) {
   if (viewerTokenValid(sessionId, req.query && req.query.t)) return true;
-  const u = currentUser(req);
-  return !!u && (!session || session.pipeline !== 'desk' || canUseSession(u, session));
+  return canUseSession(currentUser(req), session);
 }

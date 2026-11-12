@@ -21,6 +21,9 @@ export function runTranslate(h) {
   let idleTimer = null;
   let audioOut = ws._audioOut; // 번역 음성 재생 여부(클라 토글로 변경 가능)
   const pending = [];
+  let pendingBytes = 0; // 연결 전 큐의 크기 — 개수뿐 아니라 바이트로도 막는다
+  let oaClosed = false; // 엔진 연결이 끝났다 — 이후 오디오는 쌓지 않는다
+  const PENDING_MAX_BYTES = 4 * 1024 * 1024;
 
   // translate 출력은 이미 자연스러운 번역이라, 카드에 바로 스트리밍해서 보여준다.
   const IDLE_MS = 1200; // 이만큼 새 글자가 없으면(말이 멈추면) 그 카드를 확정
@@ -60,6 +63,7 @@ export function runTranslate(h) {
     if (!oa || oa.readyState !== WebSocket.OPEN) return;
     oaReady = true;
     while (pending.length) oa.send(pending.shift());
+    pendingBytes = 0;
     toHost({ type: 'status', message: '엔진 연결됨 (translate)' });
     bumpIdle(); // 무입력 카운트다운 시작
   }
@@ -104,6 +108,8 @@ export function runTranslate(h) {
   // '진행 중처럼 보이며 오디오가 조용히 버려지는' 상태를 만들지 않는다.
   oa.on('close', () => {
     oaReady = false;
+    oaClosed = true;
+    pending.length = 0; pendingBytes = 0; // 다시 연결하지 않으므로 쌓아 둔 오디오를 버린다
     toHost({ type: 'idle-stop' });
     toHost({ type: 'status', message: '엔진 연결 종료 — 다시 시작해 주세요.' });
   });
@@ -112,7 +118,13 @@ export function runTranslate(h) {
     if (isBinary) {
       const msg = JSON.stringify({ type: 'session.input_audio_buffer.append', audio: Buffer.from(data).toString('base64') });
       if (oaReady) oa.send(msg);
-      else { pending.push(msg); if (pending.length > 400) pending.shift(); } // 연결 전 큐 상한(~30초) — 엔진 미연결 장기화 시 메모리 폭증 방지
+      else if (!oaClosed) {
+        // 연결 전 큐 상한(~30초·4MB) — 예전엔 개수(400)만 세어, 큰 프레임을 보내면 연결 하나가 수백 MB 를 붙잡을 수 있었고
+        // 엔진 연결이 끝난 뒤에도 계속 쌓였다(2026-11-12 보안 점검)
+        pending.push(msg); pendingBytes += msg.length;
+        while (pending.length > 400 || (pendingBytes > PENDING_MAX_BYTES && pending.length > 1)) pendingBytes -= pending.shift().length;
+        if (pendingBytes > PENDING_MAX_BYTES) { pending.length = 0; pendingBytes = 0; } // 프레임 하나가 상한보다 크면 버린다
+      }
       return;
     }
     let m;

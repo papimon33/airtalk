@@ -120,6 +120,12 @@ function SystemPanel() {
                 <Chip size="small" color="error" label={`기록 저장 실패 ${health.saveFail.count}회 — ${health.saveFail.msg}`} />
               )}
             </Box>
+            {/* 서버가 본 내 접속 주소 — 로그인 잠금·횟수 제한의 기준. 내 실제 주소와 다르면 프록시 단계 수 설정(TRUST_PROXY)이 맞지 않는 것 */}
+            {health.seenIp && (
+              <Typography sx={{ fontSize: 12, color: 'text.secondary', mb: 1 }}>
+                서버가 본 내 접속 주소: {health.seenIp} (프록시 {health.forwardedHops}단계 중 {health.trustProxy}단계 신뢰). 내 공인 IP와 다르면 TRUST_PROXY 값을 고치세요.
+              </Typography>
+            )}
             {/* 응대 보존 상한 초과: 오래된 응대 전문이 잘려 나갔다(되돌릴 수 없음) */}
             {health.deskLogFull && health.deskLogFull.length > 0 && (
               <Box sx={{ mt: 1.5 }}>

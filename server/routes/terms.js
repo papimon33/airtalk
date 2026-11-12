@@ -6,6 +6,10 @@ import { requireAuth, requireAdmin } from '../auth/index.js';
 import { reasoningEffort } from '../vendors/openai.js';
 import { buildSonioxContextRaw, validateSonioxPair } from '../vendors/soniox.js';
 import { logErr } from '../metrics.js';
+import express from 'express';
+
+// 용어집 업로드(수천 행)만 16mb — 관리자 확인(requireAdmin) 뒤에 돈다. 그 밖의 요청은 index.js 의 256kb 한도.
+const bigJson = express.json({ limit: '16mb' });
 
 export function registerTermsAdminRoutes(app) {
   /* ---- 관리자: 오탈자·오번역 검사 — 최근 대화의 원문·번역 쌍을 GPT 로 단어 단위 대조 검수 ----
@@ -130,7 +134,7 @@ export function registerTermsConfigRoutes(app) {
       updatedAt: termsConfig.updatedAt || 0,
     });
   });
-  app.put('/api/terms-config', requireAdmin, async (req, res) => {
+  app.put('/api/terms-config', requireAdmin, bigJson, async (req, res) => {
     // 신 스키마(entries) + 구형(terms/translationTerms/alt, JSON 업로드) 모두 정규화 수용
     setTermsConfig({ ...normalizeTermsConfig(req.body || {}), updatedAt: Date.now() });
     try { await persistTermsConfig(); }

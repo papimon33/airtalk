@@ -1,8 +1,8 @@
 /* 관리자 시스템: 상태(health)·브라우저 오류 수집 / 전체 초기화·백업 */
 import crypto from 'crypto';
-import { ADMIN_PASSWORD, DESKLOG_CAP, REFINE_MODELS } from '../../config.js';
+import { ADMIN_PASSWORD, DESKLOG_CAP, REFINE_MODELS, TRUST_PROXY } from '../../config.js';
 import { metrics } from '../../metrics.js';
-import { sessions, setSessions, dataKey, col, dirtySessions, sessionsFlushInflight, flushSessions, termsConfig, saveAppSettings } from '../../store/index.js';
+import { sessions, setSessions, dataKey, col, dirtySessions, sessionFlushesDone, flushSessions, mongoMode, termsConfig, saveAppSettings } from '../../store/index.js';
 import { currentRefineModel } from '../../vendors/openai.js';
 import { requireAdmin, adminTotpSecret } from '../../auth/index.js';
 import { rooms } from '../../realtime/rooms.js';
@@ -21,6 +21,9 @@ export function registerSystemRoutes(app) {
       dataEncrypted: !!dataKey,
       twoFaEnabled: !!adminTotpSecret(),
       forceHttps: process.env.FORCE_HTTPS === '1',
+      // 서버가 본 이 요청의 접속 주소 — 로그인 잠금·횟수 제한의 기준. 내 실제 주소와 다르면 프록시 단계 수(TRUST_PROXY)가 배포와 맞지 않는 것이다.
+      seenIp: String(req.ip || ''), forwardedHops: String(req.headers['x-forwarded-for'] || '').split(',').filter((x) => x.trim()).length, trustProxy: TRUST_PROXY,
+      twoFaStore: process.env.ADMIN_TOTP_SECRET ? 'env' : mongoMode() ? 'db' : 'file',
       saveFail: metrics.saveFail,           // 세션 저장(디스크·Mongo) 최근 실패 — null 이면 정상
       deskLogFull: metrics.deskLogFull.slice(-10).reverse(), // 응대 보존 상한 초과로 잘려 나간 기록
       deskLogCap: DESKLOG_CAP,
@@ -86,7 +89,7 @@ export function registerDataRoutes(app) {
     dirtySessions.clear();
     try {
       if (col) {
-        if (sessionsFlushInflight) await sessionsFlushInflight;
+        await sessionFlushesDone(); // 도는 저장이 끝난 뒤에 지운다(늦은 upsert 가 되살리지 않게)
         await col.deleteMany({ id: { $nin: kept.map((s) => s.id) } }); // 데스크 세션 외 전부 삭제
         for (const s of kept) await col.replaceOne({ id: s.id }, s, { upsert: true }); // 비운 상태로 저장
       } else await flushSessions();

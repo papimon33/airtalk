@@ -14,10 +14,14 @@ import { runTranslate } from '../pipelines/translate.js';
 /*  pipeline='translate': gpt-realtime-translate -> gpt 다듬기                */
 export function handleHost(ws) {
   const sessionId = ws._session;
-  // 데스크 여객 마이크 공급 전용 연결(2마이크 모드) — 일반 호스트 파이프라인을 타지 않는다
-  if (ws._src === 'guestmic') return runDeskGuestFeed(ws);
-  const side = ws._src === 'system' || ws._src === 'mic2' ? 'left' : 'right'; // 시스템·상대 마이크(스테레오 R)=좌, 내 마이크=우
   const session = getSession(sessionId);
+  // 데스크 여객 마이크 공급 전용 연결(2마이크 모드) — 일반 호스트 파이프라인을 타지 않는다. 안내데스크 세션에서만.
+  if (ws._src === 'guestmic') {
+    if (session && session.pipeline === 'desk') return runDeskGuestFeed(ws);
+    try { ws.close(); } catch {}
+    return;
+  }
+  const side = ws._src === 'system' || ws._src === 'mic2' ? 'left' : 'right'; // 시스템·상대 마이크(스테레오 R)=좌, 내 마이크=우
   // 동시접속 충돌 방지: 같은 세션·같은 소스로 이미 녹음 중인 연결이 있으면 그쪽을 종료하고 새 연결이 승계.
   // (같은 계정으로 다른 기기/탭에서 시작하거나, 새로고침 후 좀비 연결이 남은 경우 — 나중 연결 우선)
   for (const h of [...getRoom(sessionId).hosts]) {
@@ -74,7 +78,9 @@ export function handleHost(ws) {
   });
   const inRaw = ws._in != null ? ws._in : session ? session.inLang : null;
   const inLang = inRaw && inRaw !== 'auto' ? inRaw : null;
-  const pipeline = ws._pipeline || (session && session.pipeline) || 'whisper';
+  // 번역 방식은 세션을 만들 때 정해진 값만 쓴다. 예전엔 접속 주소의 pipeline 값이 먼저여서, 안내데스크 권한이 없는 계정이
+  // 일반 세션에서 안내데스크 처리를 돌릴 수 있었고 그 과정에서 대화 기록이 응대 기록으로 옮겨져 화면에서 사라졌다(2026-11-12 보안 점검).
+  const pipeline = (session && session.pipeline) || 'whisper';
   // 출력 언어 목록: whisper 는 다국어, translate 는 1개
   const sessionLangs =
     session && Array.isArray(session.langs) && session.langs.length
@@ -144,8 +150,10 @@ export function handleHost(ws) {
     for (let i = session.items.length - 1; i >= 0 && rows.length < 3; i--) {
       const it = session.items[i];
       if (!it || it.id === excludeId) continue;
-      const t = (it.texts && (it.texts[key] || Object.values(it.texts)[0])) || it.source;
-      if (t) rows.unshift(String(t).slice(0, 120));
+      // 글로 쓴 문장(via:'text')은 번역된 것만 쓴다 — 참가자가 쓴 원문 그대로를 다른 사람 카드의 감수 지시문에 넣지 않는다.
+      // 줄바꿈·대괄호는 지운다(지시문의 구획 표시 [..] 를 흉내 내지 못하게).
+      const t = (it.texts && (it.texts[key] || Object.values(it.texts)[0])) || (it.via === 'text' ? '' : it.source);
+      if (t) rows.unshift(String(t).replace(/[\[\]\r\n]+/g, ' ').slice(0, 120));
     }
     return rows.join('\n');
   };

@@ -1,7 +1,9 @@
 /* 실시간(WebSocket) 진입 — 업그레이드 인증·연결 분기(뷰어/호스트)·하트비트. index.js 가 attachRealtime(server) 로 붙인다. */
 import { WebSocketServer, WebSocket } from 'ws';
-import { TARGET_LANG } from '../config.js';
-import { authFromReq, currentUser, viewerTokenValid, permsOf, canUseSession } from '../auth/index.js';
+import { TARGET_LANG, TRUST_PROXY } from '../config.js';
+import { authFromReq, viewerTokenValid, permsOf, canUseSession, onLoginRevoked } from '../auth/index.js';
+import { sameOrigin } from '../auth/middleware.js';
+import { clientIp } from '../util/net_util.js';
 import { getSession } from '../store/sessions.js';
 import { logErr } from '../metrics.js';
 import { rooms } from './rooms.js';
@@ -47,44 +49,45 @@ export function attachRealtime(server) {
     const { pathname, searchParams } = new URL(req.url, `http://${req.headers.host}`);
     const sessionId = searchParams.get('session') || '';
     const sess = getSession(sessionId);
-    const isDesk = sess?.pipeline === 'desk';
+    const isWs = pathname === '/ws/host' || pathname === '/ws/viewer';
+    const refuse = (line) => { socket.write(`HTTP/1.1 ${line}\r\n\r\n`); socket.destroy(); };
+    // 브라우저가 다른 사이트에서 연 연결은 받지 않는다(Origin 이 있을 때만 검사 — 앱·테스트 클라이언트는 Origin 을 보내지 않는다).
+    // 지금까지는 쿠키의 SameSite 설정에만 기대고 있었다.
+    if (isWs && req.headers.origin && !sameOrigin(req, req.headers.origin)) return refuse('403 Forbidden');
     const hostAuth = pathname === '/ws/host'
       ? authFromReq(req, { grace: (t, reason) => reason === 'replaced' && hostGraceOk(t.jti, sessionId) })
       : null;
     const hostUser = hostAuth ? hostAuth.user : null;
-    if (pathname === '/ws/host' && !hostUser) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    // 안내데스크 운영은 그 데스크의 주인(안내데스크 권한 필요) 또는 관리자만
-    if (pathname === '/ws/host' && isDesk && !canUseSession(hostUser, sess)) {
-      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    // 공개 뷰어: 유효 토큰(QR 에 포함) 또는 로그인 사용자만. id 열거로 무단 접속하는 것을 막는다(안내데스크는 로그인만으론 안 되고 주인·관리자만).
-    if (pathname === '/ws/viewer' && !viewerTokenValid(sessionId, searchParams.get('t'))) {
-      const u = currentUser(req);
-      if (!u || (isDesk && !canUseSession(u, sess))) {
-        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-        socket.destroy();
-        return;
+    if (pathname === '/ws/host' && !hostUser) return refuse('401 Unauthorized');
+    // 호스트 접속(번역 시작)은 있는 세션의 주인(안내데스크는 권한도) 또는 관리자만.
+    // 예전엔 이 확인이 안내데스크 세션에만 있어서, 로그인한 계정이면 남의 일반 세션에 진행자로 붙을 수 있었고
+    // 지워진 안내데스크 주소로도 붙을 수 있었다(2026-11-12 보안 점검).
+    if (pathname === '/ws/host' && !canUseSession(hostUser, sess)) return refuse('403 Forbidden');
+    // 뷰어: 있는 세션에, 유효 토큰(QR 에 포함) 또는 로그인한 그 세션의 주인·관리자만. id 열거로 무단 접속하는 것을 막는다.
+    let viewerAuth = null;
+    if (pathname === '/ws/viewer') {
+      if (!sess) return refuse('404 Not Found');
+      if (!viewerTokenValid(sessionId, searchParams.get('t'))) {
+        viewerAuth = authFromReq(req);
+        if (!canUseSession(viewerAuth.user, sess)) return refuse('403 Forbidden');
       }
     }
-    if (pathname === '/ws/host' || pathname === '/ws/viewer') {
+    const loginAuth = hostAuth || viewerAuth; // 로그인으로 들어온 연결(토큰만으로 들어온 뷰어는 null)
+    if (isWs) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         ws._kind = pathname === '/ws/host' ? 'host' : 'viewer';
-        ws._ip = String((req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket.remoteAddress || '').trim(); // 뷰어 IP당 접속 상한용
-        ws._userId = hostUser ? hostUser.id : null;
+        ws._ip = clientIp(req, TRUST_PROXY); // 뷰어 IP당 접속 상한용 — req.ip 와 같은 규칙
+        ws._userId = loginAuth && loginAuth.user ? loginAuth.user.id : null; // 로그인이 끝나면 이 연결도 닫는다(아래 onLoginRevoked)
         ws._perms = hostUser ? permsOf(hostUser) : {}; // 호스트 권한(tts·desk) — 연결 시점 기준
-        ws._jti = hostAuth ? hostAuth.jti : null; // 로그인 토큰 — 번역 중 재접속 허용 판단(hostGraceOk)
-        ws._session = searchParams.get('session') || 'default';
-        ws._hostView = searchParams.get('role') === 'host'; // 호스트 화면의 패시브 뷰어 — 데스크 현황판 '뷰어 수'에서 제외
+        ws._jti = loginAuth ? loginAuth.jti || null : null; // 로그인 토큰 — 번역 중 재접속 허용 판단(hostGraceOk)·로그인 종료 시 연결 정리
+        ws._session = sessionId;
+        // 호스트 화면의 패시브 뷰어 — 뷰어 수·접속 상한에서 제외. 로그인으로 들어온 주인·관리자의 연결만 인정한다
+        // (예전엔 주소에 role=host 만 붙이면 누구든 상한을 건너뛰었다. 2026-11-12 보안 점검)
+        ws._hostView = searchParams.get('role') === 'host' && !!(viewerAuth && viewerAuth.user);
         ws._src = searchParams.get('src') || 'mic'; // mic | system
         ws._out = searchParams.get('out') || TARGET_LANG;
         ws._in = searchParams.get('in'); // 입력 언어 코드 | 'auto' | null
-        ws._pipeline = searchParams.get('pipeline'); // 'whisper' | 'translate' | null
+        // pipeline 은 세션에 저장된 값만 쓴다(realtime/host.js) — 주소의 pipeline 값은 받지 않는다
         ws._audioOut = searchParams.get('audioOut') === '1'; // translate 번역 음성 재생 여부
         ws._sxSens = searchParams.get('sxSens');       // soniox endpoint_sensitivity (-1~1)
         ws._sxMaxDelay = searchParams.get('sxMaxDelay'); // soniox max_endpoint_delay_ms (500~3000)
@@ -112,6 +115,18 @@ export function attachRealtime(server) {
       // 비정상 Host 헤더(URL 파싱 실패)·깨진 % 쿠키 등 동기 예외 시 TCP 소켓을 방치하지 않는다(FD 누수 방지)
       logErr('ws-upgrade', e);
       try { socket.destroy(); } catch {}
+    }
+  });
+
+  // 로그인이 끝나면(로그아웃·비밀번호 변경·계정 삭제) 그 로그인으로 열린 호스트·뷰어 연결을 닫는다.
+  // '다른 기기에서 로그인'(replaced)은 여기 오지 않는다 — 진행 중인 번역은 중지할 때까지 이어진다는 기존 규칙 그대로.
+  onLoginRevoked((userId, jtis) => {
+    if (jtis) for (const j of jtis) hostJti.delete(j); // 끝난 토큰은 재접속 유예도 없다
+    for (const ws of wss.clients) {
+      if (ws._userId !== userId) continue;
+      if (jtis && !jtis.includes(ws._jti)) continue;
+      try { ws.send(JSON.stringify({ type: 'status', message: '로그인이 끝나 연결을 종료했습니다.' })); } catch {}
+      try { ws.close(4401, 'login ended'); } catch {}
     }
   });
 

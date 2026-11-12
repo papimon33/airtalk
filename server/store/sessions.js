@@ -41,6 +41,19 @@ export function migrateSessions() {
     if (moved) console.log(`[store] 실시간 번역 모드 이전 ${moved}개 (live/oneway/twoway·구 프리셋 → 실시간 번역/양방향 통역 + 소스)`);
   }
 
+  // 제목·입력 언어가 글자가 아닌 세션 정리(2026-11-12 보안 점검) — 예전엔 만들 때 형식을 확인하지 않았다.
+  // 글자가 아닌 제목은 그 제목을 그리는 화면(관리자 기록)을 멈추게 한다. 부팅 시 1회, 바뀐 세션만 저장.
+  {
+    let fixed = 0;
+    for (const s of sessions) {
+      let hit = false;
+      if (typeof s.title !== 'string') { s.title = '새 세션'; hit = true; }
+      if (s.inLang != null && typeof s.inLang !== 'string') { s.inLang = 'auto'; hit = true; }
+      if (hit) { saveSessions(s.id); fixed++; }
+    }
+    if (fixed) console.log(`[store] 형식이 잘못된 세션 제목·입력 언어 정리 ${fixed}개`);
+  }
+
   // 길안내 지도·안내데스크 등록(층·방향·데스크명) 삭제(2026-10-27) — 남은 필드를 지운다. 부팅 시 1회, 바뀐 세션만 저장.
   {
     let cleaned = 0;
