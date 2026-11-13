@@ -1,0 +1,115 @@
+/* AirTalk 디자인 토큰 — 프레임워크 무관(HTML·Tailwind·Vue 등). 원본: translate/client/src/shared/theme.js·brand.js
+   사용: <html data-theme="light|dark"> 또는 시스템 설정. 색은 반드시 var(--at-*) 로만 쓴다. */
+
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Nunito:wght@900&display=swap');
+
+:root {
+  color-scheme: light;
+  /* 브랜드 — 주 행동·켜짐·선택·로고 점에만 */
+  --at-brand: #5B4FE8;
+  --at-brand-hover: #4A3FD4;
+  --at-brand-soft: #EEEDFC;          /* 선택됨·켜짐 칸 바탕 */
+  --at-on-brand: #FFFFFF;
+
+  /* 뉴트럴(웜) */
+  --at-bg: #FFFFFF;                  /* 캔버스 */
+  --at-paper: #FFFFFF;               /* 카드·창·메뉴 */
+  --at-settings-bg: #F4F3EF;         /* 폰 설정 화면 바탕(흰 카드 묶음과 대비) */
+  --at-bar: #F1F1F4;                 /* 조작 바·묶음 회색 */
+  --at-text: #1F1E1D;
+  --at-text-2: #6B6A63;              /* 보조 */
+  --at-text-3: rgba(31, 30, 29, 0.38); /* 비활성 */
+  --at-divider: rgba(31, 30, 29, 0.12);
+  --at-hover: rgba(31, 30, 29, 0.07);
+  --at-fill: rgba(31, 30, 29, 0.06); /* 입력칸·보조 버튼 바탕 */
+
+  /* 상태 */
+  --at-danger: #E01E5A;
+  --at-success: #007A5A;
+  --at-warning: #E8912D;
+  --at-accent: #2E6FD8;              /* 상대방 말풍선·보조 강조 */
+
+  /* 글꼴 */
+  --at-font: 'Pretendard', 'Noto Sans KR', system-ui, 'Segoe UI', sans-serif;
+  --at-font-ja: 'Pretendard JP Variable', 'Pretendard', 'Noto Sans KR', system-ui, sans-serif;
+  --at-font-zh: 'Noto Sans SC', 'Pretendard', system-ui, sans-serif;
+  --at-font-logo: 'Nunito', 'Pretendard', system-ui, sans-serif; /* 900, 소문자 */
+
+  /* 모서리 */
+  --at-r-row: 8px;       /* 메뉴 안 줄 */
+  --at-r-control: 12px;  /* 버튼·입력·아이콘 버튼 */
+  --at-r-menu: 12px;     /* 작은 메뉴·창 안 패널 */
+  --at-r-big: 16px;      /* 큰 버튼·선택 카드 칸 */
+  --at-r-group: 18px;    /* 설정 묶음 카드 */
+  --at-r-card: 20px;     /* 모드 선택 카드 */
+  --at-r-dialog: 24px;   /* 대화상자·시트 위 모서리 28px */
+  --at-r-pill: 999px;
+
+  /* 그림자 — 떠 있는 것만 */
+  --at-shadow-bar: 0 4px 14px rgba(0, 0, 0, 0.07);
+  --at-shadow-menu: 0 12px 32px rgba(0, 0, 0, 0.18);
+  --at-shadow-brand: 0 6px 16px rgba(91, 79, 232, 0.30);
+  --at-shadow-danger: 0 6px 16px rgba(220, 38, 38, 0.26);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --at-brand: #8579FF;
+  --at-brand-hover: #9A90FF;
+  --at-brand-soft: rgba(91, 79, 232, 0.28);
+  --at-bg: #1F1E1D;
+  --at-paper: #30302E;
+  --at-settings-bg: #1F1E1D;
+  --at-bar: #2B2D31;
+  --at-text: #FAF9F5;
+  --at-text-2: #B3B1A9;
+  --at-text-3: rgba(250, 249, 245, 0.38);
+  --at-divider: rgba(250, 249, 245, 0.10);
+  --at-hover: rgba(250, 249, 245, 0.08);
+  --at-fill: rgba(250, 249, 245, 0.07);
+  --at-danger: #F47C7C;
+  --at-success: #2EB67D;
+  --at-warning: #E8A03E;
+  --at-accent: #84B5FF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --at-brand: #8579FF; --at-brand-hover: #9A90FF; --at-brand-soft: rgba(91, 79, 232, 0.28);
+    --at-bg: #1F1E1D; --at-paper: #30302E; --at-settings-bg: #1F1E1D; --at-bar: #2B2D31;
+    --at-text: #FAF9F5; --at-text-2: #B3B1A9; --at-text-3: rgba(250, 249, 245, 0.38);
+    --at-divider: rgba(250, 249, 245, 0.10); --at-hover: rgba(250, 249, 245, 0.08); --at-fill: rgba(250, 249, 245, 0.07);
+    --at-danger: #F47C7C; --at-success: #2EB67D; --at-warning: #E8A03E; --at-accent: #84B5FF;
+  }
+}
+
+body { margin: 0; background: var(--at-bg); color: var(--at-text); font-family: var(--at-font); font-size: 14px; -webkit-font-smoothing: antialiased; }
+[lang|="ja"], [lang|="ja"] * { font-family: var(--at-font-ja); }
+[lang|="zh"], [lang|="zh"] * { font-family: var(--at-font-zh); }
+h1, h2, h3 { font-weight: 800; letter-spacing: -0.015em; text-wrap: balance; }
+button { font-family: inherit; text-transform: none; }
+
+/* 워드마크: <span class="at-logo">airtalk<b>.</b></span> */
+.at-logo { font-family: var(--at-font-logo); font-weight: 900; letter-spacing: -0.02em; line-height: 1; color: var(--at-text); }
+.at-logo b { color: var(--at-brand); font-weight: 900; }
+
+/* 기본 부품(최소) — 자세한 규격은 components.md */
+.at-btn { height: 40px; padding: 0 16px; border: 0; border-radius: var(--at-r-control); font-size: 14px; font-weight: 700; cursor: pointer; background: var(--at-fill); color: var(--at-text); }
+.at-btn:hover { background: var(--at-hover); }
+.at-btn--primary { background: var(--at-brand); color: var(--at-on-brand); }
+.at-btn--primary:hover { background: var(--at-brand-hover); }
+.at-btn--danger { background: var(--at-danger); color: #fff; }
+.at-btn--big { height: 52px; border-radius: var(--at-r-big); font-size: 15.5px; }
+.at-btn:focus-visible, .at-icon-btn:focus-visible { outline: 2px solid var(--at-brand); outline-offset: 2px; }
+.at-icon-btn { width: 40px; height: 40px; border: 0; border-radius: var(--at-r-control); background: transparent; color: var(--at-text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.at-icon-btn:hover { background: var(--at-hover); }
+.at-icon-btn[aria-pressed="true"] { background: var(--at-brand-soft); color: var(--at-brand); }
+.at-bar-group { display: inline-flex; align-items: center; gap: 2px; padding: 4px; border-radius: 14px; background: var(--at-bar); box-shadow: var(--at-shadow-bar); }
+.at-menu { min-width: 220px; padding: 6px 0; border-radius: var(--at-r-menu); background: var(--at-paper); box-shadow: var(--at-shadow-menu); }
+.at-menu-row { display: flex; align-items: center; gap: 8px; margin: 0 6px; padding: 6px 8px; min-height: 34px; border-radius: var(--at-r-row); font-size: 13.5px; font-weight: 600; }
+.at-menu-row:hover { background: var(--at-hover); }
+.at-group { border-radius: var(--at-r-group); background: var(--at-paper); overflow: hidden; }
+.at-row { display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 0 18px; font-size: 16px; font-weight: 700; }
+.at-row + .at-row { border-top: 1px solid var(--at-divider); margin-left: 18px; padding-left: 0; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
