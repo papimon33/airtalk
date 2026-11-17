@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { startFakeSoniox } from './helpers/fake-soniox.mjs';
-import { bootServer, loginAdmin, until, wait, deskToken } from './helpers/boot.mjs';
+import { bootServer, loginAdmin, until, wait, deskToken, readStoredSessions } from './helpers/boot.mjs';
 
 const item = (id) => ({ id, side: 'right', source: '안녕하세요', texts: { ja: 'こんにちは' } });
 const legacy = (id, preset, extra = {}) => ({ id, owner: 'admin', title: id, createdAt: 1, updatedAt: 1, pipeline: 'soniox', preset, langs: ['ko'], outLang: 'ko', inLang: 'auto', items: [], ...extra });
@@ -31,12 +31,13 @@ test('부팅 시 구 프리셋 세션이 실시간 번역/양방향 통역 + 소
   const srv = await bootServer({ DATA_DIR: dir });
   t.after(async () => { await srv.stop(); });
 
-  // 이전분은 디바운스(~400ms) 후 디스크에 기록된다
+  // 이전분은 디바운스(~400ms) 후 디스크에 기록된다(심어 둔 sessions.json 은 첫 부팅에 SQLite 로 옮겨진다)
   let saved;
   await until(() => {
-    try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return false; }
-    return saved.find((s) => s.id === 's-live')?.src === 'mic';
+    saved = readStoredSessions(dir);
+    return !!saved && saved.find((s) => s.id === 's-live')?.src === 'mic';
   }, { desc: '이전 결과 저장' });
+  assert.ok(!fs.existsSync(file) && fs.readdirSync(dir).some((f) => f.startsWith('sessions.json.migrated-')), 'sessions.json 은 SQLite 로 옮긴 뒤 이름을 바꿔 남긴다');
   const by = Object.fromEntries(saved.map((s) => [s.id, s]));
   const expect = {
     's-live': ['oneway', 'mic'], 's-oneway': ['oneway', 'system'], 's-online': ['oneway', 'system'],

@@ -1,8 +1,8 @@
 /* 관리자 시스템: 상태(health)·브라우저 오류 수집 / 전체 초기화·백업 */
 import crypto from 'crypto';
-import { ADMIN_PASSWORD, DESKLOG_CAP, REFINE_MODELS, TRUST_PROXY } from '../../config.js';
+import { ADMIN_PASSWORD, DESKLOG_CAP, REFINE_MODELS, TRUST_PROXY, TRANSCRIPT_RETENTION_DAYS, AUDIT_LOG, AUDIT_RETENTION_DAYS, SONIOX_AUDIO_CODEC } from '../../config.js';
 import { metrics } from '../../metrics.js';
-import { sessions, setSessions, dataKey, col, dirtySessions, sessionFlushesDone, flushSessions, mongoMode, termsConfig, saveAppSettings } from '../../store/index.js';
+import { sessions, setSessions, dataKey, col, sessionDb, dirtySessions, sessionFlushesDone, rewriteAllSessions, mongoMode, termsConfig, saveAppSettings } from '../../store/index.js';
 import { currentRefineModel } from '../../vendors/openai.js';
 import { requireAdmin, adminTotpSecret } from '../../auth/index.js';
 import { rooms } from '../../realtime/rooms.js';
@@ -19,6 +19,10 @@ export function registerSystemRoutes(app) {
       liveHosts: rms.reduce((a, r) => a + r.hosts.size, 0),
       liveViewers: rms.reduce((a, r) => a + r.viewers.size, 0),
       dataEncrypted: !!dataKey,
+      sessionStore: col ? 'mongodb' : sessionDb ? 'sqlite' : 'json', // 세션 저장 방식
+      transcriptRetentionDays: TRANSCRIPT_RETENTION_DAYS,               // 0 = 무기한
+      auditLog: AUDIT_LOG ? { retentionDays: AUDIT_RETENTION_DAYS } : null, // 접속·관리 로그
+      audioCodec: SONIOX_AUDIO_CODEC,                                   // 엔진으로 보내는 음성 형식
       twoFaEnabled: !!adminTotpSecret(),
       forceHttps: process.env.FORCE_HTTPS === '1',
       // 서버가 본 이 요청의 접속 주소 — 로그인 잠금·횟수 제한의 기준. 내 실제 주소와 다르면 프록시 단계 수(TRUST_PROXY)가 배포와 맞지 않는 것이다.
@@ -92,7 +96,7 @@ export function registerDataRoutes(app) {
         await sessionFlushesDone(); // 도는 저장이 끝난 뒤에 지운다(늦은 upsert 가 되살리지 않게)
         await col.deleteMany({ id: { $nin: kept.map((s) => s.id) } }); // 데스크 세션 외 전부 삭제
         for (const s of kept) await col.replaceOne({ id: s.id }, s, { upsert: true }); // 비운 상태로 저장
-      } else await flushSessions();
+      } else await rewriteAllSessions(); // 파일 모드(SQLite·JSON): 지운 세션까지 저장소에 반영
     } catch (err) {
       console.error('[reset-all] 저장소 정리 실패', err);
       return res.status(500).json({ error: '저장소 정리에 실패했습니다 — 서버 로그를 확인하세요.' });

@@ -63,6 +63,11 @@ export const sxRetryDelay = (n) => Math.min(SX_RETRY_BASE_MS * 2 ** (n - 1), 150
 // 시범운영 기간의 응대 전문은 보고서의 원천 데이터라 유실되면 복구 수단이 없어 넉넉히 잡는다.
 // 응대 1건 ≈ 2~4KB(toks 제외 후)이므로 1,000건이라도 세션 문서는 수 MB 수준 — Mongo 16MB 한도 안.
 export const DESKLOG_CAP = 1000;
+// 대화 기록 보관 기간(일). 지나면 대화 문장·응대 기록을 지운다(세션·사용량 통계는 남김). 0 = 무기한(기본). store/sessions.js purgeOldTranscripts
+export const TRANSCRIPT_RETENTION_DAYS = Math.max(0, Math.floor(Number(process.env.TRANSCRIPT_RETENTION_DAYS) || 0));
+// 접속·관리 로그(util/audit.js): 끄기 AUDIT_LOG=0, 보관 기간(일, 기본 365)
+export const AUDIT_LOG = process.env.AUDIT_LOG !== '0';
+export const AUDIT_RETENTION_DAYS = Math.max(1, Math.floor(Number(process.env.AUDIT_RETENTION_DAYS) || 365));
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || ''; // Soniox 실시간 번역(선택)
 // Soniox stt-rt-v6 지원 언어(60) — 번역은 지원 언어 임의 쌍. 선택 UI/검증에 사용.
 export const SONIOX_LANGS = ['af','sq','ar','az','eu','be','bn','bs','bg','ca','zh','hr','cs','da','nl','en','et','fi','fr','gl','de','el','gu','he','hi','hu','id','it','ja','kn','kk','ko','lv','lt','mk','ms','ml','mr','no','fa','pl','pt','pa','ro','ru','sr','sk','sl','es','sw','sv','tl','ta','te','th','tr','uk','ur','vi','cy'];

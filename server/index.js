@@ -6,12 +6,13 @@ import express from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { PORT, STATIC_DIR, SONIOX_API_KEY, CARTESIA_ADMIN_API_KEY, OPENAI_ADMIN_API_KEY, TRUST_PROXY, LISTEN_HOST } from './config.js';
+import { PORT, STATIC_DIR, SONIOX_API_KEY, CARTESIA_ADMIN_API_KEY, OPENAI_ADMIN_API_KEY, TRUST_PROXY, LISTEN_HOST, TRANSCRIPT_RETENTION_DAYS, SONIOX_AUDIO_CODEC } from './config.js';
+import { audit, auditMiddleware, pruneAuditLogs } from './util/audit.js';
 import { logErr } from './metrics.js';
 import { loadStore, sessions, dirtySessions, flushSessions, flushUsers, flushUsage, flushProfiles } from './store/index.js';
 import { initTermsConfig } from './store/terms.js';
-import { migrateSessions } from './store/sessions.js';
-import { authBootCheck, loadSecurityCfg, migrateUserPerms, adminCredentialCheck } from './auth/index.js';
+import { migrateSessions, purgeOldTranscripts } from './store/sessions.js';
+import { authBootCheck, loadSecurityCfg, migrateUserPerms, adminCredentialCheck, currentUser } from './auth/index.js';
 import { forceHttps, securityHeaders, csrfGuard } from './auth/middleware.js';
 import { kickVendorRefresh } from './vendors/usage.js';
 import { getLanIp } from './util/net_util.js';
@@ -46,6 +47,8 @@ app.use(csrfGuard);
 // 예전엔 주소만 보고 여기서 16mb 를 읽어, 로그인하지 않은 요청도 16mb 까지 메모리에 올렸다(2026-11-12 보안 점검).
 const smallJson = express.json({ limit: '256kb' });
 app.use((req, res, next) => (req.method === 'PUT' && req.path === '/api/terms-config' ? next() : smallJson(req, res, next)));
+// 접속·관리 로그(로그인·상태 변경·관리자 조회) — util/audit.js. 본문·쿼리는 남기지 않는다
+app.use(auditMiddleware(currentUser));
 // 빌드된 React 앱(dist) 서빙
 if (!fs.existsSync(STATIC_DIR)) {
   console.warn('\n[경고] dist 폴더가 없습니다. 먼저 `npm run build` 를 실행하세요. (npm start 는 자동 빌드)\n');
@@ -62,6 +65,12 @@ await initTermsConfig();
 migrateSessions();
 migrateUserPerms();
 authBootCheck();
+// 보관 기간 지난 대화 기록·접속 로그 정리(부팅 1회 + 아래 주기)
+purgeOldTranscripts(TRANSCRIPT_RETENTION_DAYS);
+pruneAuditLogs();
+audit('server.start', { node: process.version, retentionDays: TRANSCRIPT_RETENTION_DAYS, audioCodec: SONIOX_AUDIO_CODEC });
+setInterval(() => { try { purgeOldTranscripts(TRANSCRIPT_RETENTION_DAYS); } catch (e) { logErr('transcript-retention', e); } }, 6 * 3600e3).unref();
+setInterval(() => pruneAuditLogs(), 24 * 3600e3).unref();
 
 /* ---- 프로세스 오류·종료 처리 ---- */
 process.on('uncaughtException', (e) => logErr('uncaught', e));

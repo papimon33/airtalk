@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { bootServer, loginAdmin, until } from './helpers/boot.mjs';
+import { bootServer, loginAdmin, until, readStoredSessions } from './helpers/boot.mjs';
 
 async function call(base, method, p, cookie, body) {
   const r = await fetch(base + p, {
@@ -34,9 +34,7 @@ async function createUser(base, adminCookie, id, password, username) {
 const readProfiles = (dataDir) => {
   try { return JSON.parse(fs.readFileSync(path.join(dataDir, 'profiles.json'), 'utf8')); } catch { return null; }
 };
-const readSessions = (dataDir) => {
-  try { return JSON.parse(fs.readFileSync(path.join(dataDir, 'sessions.json'), 'utf8')); } catch { return null; }
-};
+const readSessions = (dataDir) => readStoredSessions(dataDir); // SQLite(airtalk.db) — 없으면 sessions.json
 
 test('GET/PATCH /api/me: 응답 형태 + 이메일 검증 + prefs 화이트리스트 + 관리자 제한 + 비밀번호 변경', { timeout: 60000 }, async (t) => {
   const srv = await bootServer();
@@ -194,7 +192,7 @@ test('DELETE /api/me: 비밀번호 확인 → 사용자·세션·프로필·라�
   assert.ok(viewerMsgs.some((m) => m.type === 'status' && /삭제/.test(m.message || '')), '종료 사유 안내');
   // 저장소(파일)에서도 제거
   await until(() => readProfiles(dataDir) && !readProfiles(dataDir).some((p) => p.id === 'lee'), { desc: 'profiles.json 에서 lee 제거' });
-  await until(() => readSessions(dataDir) && !readSessions(dataDir).some((s) => s.id === sess.id), { desc: 'sessions.json 에서 세션 제거' });
+  await until(() => readSessions(dataDir) && !readSessions(dataDir).some((s) => s.id === sess.id), { desc: '저장소에서 세션 제거' });
   const usersFile = JSON.parse(fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8'));
   assert.ok(!usersFile.some((u) => u.id === 'lee'), 'users.json 에서 제거');
 

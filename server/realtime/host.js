@@ -3,6 +3,7 @@ import { TARGET_LANG, ITEMS_CAP, REFINE_MODEL } from '../config.js';
 import { saveSessions, addUsage, recordUsage } from '../store/index.js';
 import { getSession } from '../store/sessions.js';
 import { getRoom, broadcast, rooms, maybeGcRoom } from './rooms.js';
+import { audit } from '../util/audit.js';
 import { polishText, translateText, retranslateText } from '../vendors/openai.js';
 import { translationCut } from '../util/pipeline_util.js';
 import { runSoniox } from '../pipelines/soniox.js';
@@ -44,12 +45,14 @@ export function handleHost(ws) {
   // 사용량 집계: 호스트 WS 연결 시간 → 사용자별 누적 + 파이프라인별 일별 비용.
   // 데스크는 예외 — 대기(idle)는 STT 미연결(비용 0)이므로 실제 통역(active) 시간만 집계.
   const usageStart = Date.now();
+  audit('host.open', { user: ws._userId, session: sessionId, src: ws._src, ip: ws._ip || '' }); // 접속·관리 로그(번역 시작)
   ws.on('close', () => {
     const ms = pipeline === 'desk'
       ? (ws._deskActiveMs || 0) + (ws._deskActiveStart ? Date.now() - ws._deskActiveStart : 0)
       : Date.now() - usageStart;
     addUsage(ws._userId, ms);
     recordUsage(pipeline, ms); // pipeline 은 아래에서 정의됨(close 시점엔 초기화 완료)
+    audit('host.close', { user: ws._userId, session: sessionId, pipeline, src: ws._src, ms }); // 번역 종료·사용 시간
   });
   // 유휴 자동 종료: 1분간 음성 활동(전사/번역 델타)이 없으면 OA 세션을 닫아 비용 절감.
   const IDLE_LIMIT_MS = 60000;

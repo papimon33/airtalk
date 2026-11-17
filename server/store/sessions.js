@@ -114,3 +114,47 @@ export function sessionByJoinCode(code) {
   if (!/^[0-9A-Z]{6}$/.test(c)) return null;
   return sessions.find((x) => !x.deletedAt && x.joinCode === c) || null;
 }
+
+/* ---- 대화 기록 보관 기간(2026-11-17) ----
+   TRANSCRIPT_RETENTION_DAYS(일, 0 = 무기한 — 기본·예전 동작)보다 오래된 대화 문장(items)과 안내데스크 응대 기록(deskLog)을 지운다.
+   세션 자체(이름·참여 코드·설정)와 사용량·과금 통계는 남긴다. 부팅 때와 6시간마다(index.js).
+   문장 시각: 레이턴시 기록 tm(c 확정 > s 시작 > e 끝) → 없으면 문장 id 앞부분(newId = 36진수 시각 + 난수 5자리) → 그래도 없으면 세션 updatedAt.
+   시각을 전혀 알 수 없는 문장은 지우지 않는다(잘못 지우는 것보다 남기는 쪽이 안전). */
+export function itemTime(it, fallback = 0) {
+  const tm = it && it.tm;
+  const t = tm && (tm.c || tm.s || tm.e);
+  if (t > 0) return t;
+  const id = String((it && it.id) || '');
+  if (id.length > 5) {
+    const n = parseInt(id.slice(0, -5), 36);
+    if (n > 1.4e12 && n < 4.1e12) return n; // 2014~2099 범위만 믿는다
+  }
+  return fallback;
+}
+// 배열을 제자리에서 줄인다 — 진행 중인 파이프라인이 같은 배열을 잡고 있어도 끊기지 않게(재할당하지 않음)
+function keepInPlace(arr, keep) {
+  const kept = arr.filter(keep);
+  const removed = arr.length - kept.length;
+  if (removed) arr.splice(0, arr.length, ...kept);
+  return removed;
+}
+export function purgeOldTranscripts(days, now = Date.now()) {
+  const out = { items: 0, deskLogs: 0, sessions: 0 };
+  if (!(days > 0)) return out;
+  const cutoff = now - days * 86400000;
+  for (const s of sessions) {
+    const fb = s.updatedAt || s.createdAt || 0;
+    let n = 0;
+    if (Array.isArray(s.items) && s.items.length) {
+      const r = keepInPlace(s.items, (it) => { const t = itemTime(it, fb); return !t || t >= cutoff; });
+      out.items += r; n += r;
+    }
+    if (Array.isArray(s.deskLog) && s.deskLog.length) {
+      const r = keepInPlace(s.deskLog, (d) => { const t = (d && (d.endedAt || d.startedAt)) || 0; return !t || t >= cutoff; });
+      out.deskLogs += r; n += r;
+    }
+    if (n) { out.sessions++; saveSessions(s.id); }
+  }
+  if (out.items || out.deskLogs) console.log(`[store] 보관 기간(${days}일) 지난 기록 삭제 — 문장 ${out.items}개, 응대 ${out.deskLogs}건 (세션 ${out.sessions}개)`);
+  return out;
+}

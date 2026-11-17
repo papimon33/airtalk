@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -101,3 +102,19 @@ export async function deskToken(base, cookie, sessionId) {
   return j.t;
 }
 export const viewerToken = deskToken;
+
+// 파일 모드 저장소의 세션 목록을 디스크에서 직접 읽는다(SQLite airtalk.db, 없으면 예전 sessions.json) — 저장·삭제 반영 확인용.
+// 테스트 서버는 DATA_KEY 없이 뜨므로 평문. 아직 저장 전이면 null.
+const requireNode = createRequire(import.meta.url);
+export function readStoredSessions(dataDir) {
+  const dbFile = path.join(dataDir, 'airtalk.db');
+  if (fs.existsSync(dbFile)) {
+    let db;
+    try {
+      const { DatabaseSync } = requireNode('node:sqlite');
+      db = new DatabaseSync(dbFile, { readOnly: true });
+      return db.prepare('SELECT doc FROM sessions').all().map((r) => JSON.parse(r.doc));
+    } catch { return null; } finally { try { db && db.close(); } catch {} }
+  }
+  try { return JSON.parse(fs.readFileSync(path.join(dataDir, 'sessions.json'), 'utf8')); } catch { return null; }
+}

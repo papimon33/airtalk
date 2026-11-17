@@ -6,6 +6,7 @@ import { DATA_DIR, MONGODB_URI, MONGODB_DB, PRICE_WHISPER_PER_MIN, PRICE_TRANSLA
 import { deriveDataKey, encryptData, decryptData } from '../util/security_util.js';
 import { kstDay } from '../util/pipeline_util.js';
 import { metrics } from '../metrics.js';
+import { openSessionDb } from './session_db.js';
 
 /* ================================================================== */
 /*  세션 영속화 (data/sessions.json)                                   */
@@ -65,6 +66,7 @@ export async function persistSecurityDoc(obj) {
   return true;
 }
 export let col = null;     // Mongo sessions 컬렉션. null 이면 파일 모드.
+export let sessionDb = null; // 파일 모드의 세션 저장(SQLite, store/session_db.js). null 이면 sessions.json 통째 저장(예전 방식)
 let usersCol = null;
 let usageCol = null;
 let usageHourlyCol = null;
@@ -148,7 +150,24 @@ export async function loadStore() {
       console.error(`[store] ${path.basename(file)} 로드 실패 — 원본을 ${path.basename(bak)} 로 백업 후 빈 상태로 계속`, e.message || e);
     }
   };
-  loadFile(DATA_FILE, (v) => { if (Array.isArray(v)) sessions = v; });
+  // 세션: SQLite(기본) — 표가 비어 있으면 sessions.json 을 한 번 옮긴다. SESSION_STORE=json 이거나 SQLite 를 못 쓰면 예전 방식
+  if (String(process.env.SESSION_STORE || 'sqlite').toLowerCase() !== 'json') {
+    try {
+      sessionDb = await openSessionDb(DATA_DIR, {
+        encrypt: (s) => (dataKey ? encryptData(dataKey, s) : s),
+        decrypt: (s) => decryptData(dataKey, s),
+      });
+    } catch (e) {
+      console.error('[store] SQLite 를 열지 못해 sessions.json 방식으로 저장합니다', e.message || e);
+      sessionDb = null;
+    }
+  }
+  if (sessionDb) {
+    sessionDb.migrateFromJson(DATA_FILE, readDataFile);
+    sessions = sessionDb.loadAll();
+  } else {
+    loadFile(DATA_FILE, (v) => { if (Array.isArray(v)) sessions = v; });
+  }
   loadFile(USERS_FILE, (v) => { if (Array.isArray(v)) users = v; });
   loadFile(USAGE_FILE, (v) => { if (v && typeof v === 'object') usageDaily = v; });
   loadFile(USAGE_HOURLY_FILE, (v) => { if (v && typeof v === 'object') usageHourly = v; });
@@ -216,13 +235,26 @@ async function flushSessionsNow() {
     }));
     if (!ops.length) return;
     await col.bulkWrite(ops, { ordered: false });
+  } else if (sessionDb) {
+    // SQLite: 바뀐 세션만 한 번의 트랜잭션으로(행 하나 = 세션 하나)
+    sessionDb.upsert(sessions.filter((s) => ids.has(s.id)));
   } else {
-    // 파일 모드는 단일 JSON 이라 전체 기록이 불가피 — 대신 동기 쓰기가 오디오 스트리밍을 막지 않게 비동기로
+    // 예전 파일 모드(SESSION_STORE=json)는 단일 JSON 이라 전체 기록이 불가피 — 대신 동기 쓰기가 오디오 스트리밍을 막지 않게 비동기로
     const tmp = DATA_FILE + '.tmp';
     const body = JSON.stringify(sessions, null, 2);
     await fs.promises.writeFile(tmp, dataKey ? encryptData(dataKey, body) : body);
     await fs.promises.rename(tmp, DATA_FILE);
   }
+}
+// 파일 모드에서 메모리 목록 전체를 저장소에 그대로 반영(관리자 전체 초기화 등 — 지운 세션 행까지 정리)
+export async function rewriteAllSessions() {
+  if (sessionDb) {
+    await sessionsFlushChain.catch(() => {});
+    dirtySessions.clear();
+    sessionDb.replaceAll(sessions);
+    return;
+  }
+  return flushSessions();
 }
 // 삭제는 flush(=upsert)로 반영되지 않으므로 별도 처리(Mongo 모드 한정).
 export async function deleteSessionStore(id) {
@@ -236,8 +268,15 @@ export async function deleteSessionStore(id) {
     } catch (e) {
       console.error('[sessions] 삭제 실패', e);
     }
+  } else if (sessionDb) {
+    try {
+      await sessionsFlushChain.catch(() => {}); // Mongo 와 같은 이유(줄 선 저장이 삭제를 되돌리지 않게)
+      sessionDb.remove(id);
+    } catch (e) {
+      console.error('[sessions] 삭제 실패', e);
+    }
   } else {
-    saveSessions(); // 파일 모드: 메모리에서 이미 splice 됨 → 전체 재기록
+    saveSessions(); // 예전 파일 모드: 메모리에서 이미 splice 됨 → 전체 재기록
   }
 }
 

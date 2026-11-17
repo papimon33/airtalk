@@ -35,7 +35,7 @@
 
 ### 준비
 
-- **Node.js 22 LTS(22.12 이상)**. 20.19 이상이면 앱은 실행되지만 `npm test` 는 Node 22가 필요합니다.
+- **Node.js 22 LTS(22.13 이상)**. 파일 모드의 세션 저장에 Node 내장 SQLite 를 씁니다(그보다 낮으면 자동으로 예전 JSON 저장). `npm test` 는 Node 22가 필요합니다.
 - API 키: OpenAI(필수), Soniox(필수), Cartesia(선택, 번역 음성). 각 회사에서 발급받습니다.
 - MongoDB(선택). 없으면 `data/` 폴더의 JSON 파일에 저장합니다.
 
@@ -95,7 +95,9 @@ npm test
 
 ## 데이터·보안
 
-- 저장소: `MONGODB_URI` 가 있으면 MongoDB, 없으면 `data/*.json` 파일. `DATA_KEY` 를 정하면 파일을 AES-256-GCM 으로 암호화해 저장합니다.
+- 저장소: `MONGODB_URI` 가 있으면 MongoDB, 없으면 서버 디스크(`data/`). 세션·대화는 SQLite(`data/airtalk.db`, Node 내장), 계정·설정은 `data/*.json` 입니다. `DATA_KEY` 를 정하면 둘 다 AES-256-GCM 으로 암호화해 저장합니다.
+- 대화 기록 보관 기간: `TRANSCRIPT_RETENTION_DAYS`(일)가 지나면 대화 문장·응대 기록을 자동으로 지웁니다(세션·사용량 통계는 남김). 0 이면 무기한입니다.
+- 접속·관리 로그: 로그인 성공·실패, 상태를 바꾸는 요청, 관리자 조회, 번역 시작·종료를 `data/logs/audit-날짜.jsonl` 에 남기고 365일 보관합니다(`AUDIT_RETENTION_DAYS`). 비밀번호·대화 내용은 남기지 않습니다.
 - 관리자 2단계 인증(TOTP), 로그인 시도 제한, 보안 헤더, 교차 출처 요청 차단을 적용했습니다. 자세한 내용은 `docs/SECURITY_GUIDE.md`.
 - 저장소의 평가 자료(`tools/eval/`의 대본·시나리오·표본)는 직접 만든 가상 대화입니다. 실제 이용자 대화나 운영 데이터는 들어 있지 않습니다.
 - API 키·비밀번호는 저장소에 넣지 않습니다. `.env` 는 `.gitignore` 에 들어 있습니다.
