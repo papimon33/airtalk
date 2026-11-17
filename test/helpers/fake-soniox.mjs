@@ -22,6 +22,8 @@ export async function startFakeSoniox(opts = {}) {
       headers: req.headers,
       config: null,
       audioBytes: 0,
+      audioMsgs: [],  // 받은 오디오 메시지 원본(Opus 시험용 — 앞 64개만)
+      texts0: [],     // 받은 글자 메시지 원문(빈 문자열 종료 신호 포함)
       loudFrames: 0, // 소리가 담긴 오디오 조각 수
       texts: [],     // config 뒤에 받은 JSON 글자 메시지
       closed: false,
@@ -38,8 +40,9 @@ export async function startFakeSoniox(opts = {}) {
         try { conn.config = JSON.parse(buf.toString()); resolveConfig(conn.config); return; } catch {}
       }
       // config 뒤의 글자 메시지(에이전트 텍스트 등) — 빈 문자열(종료 신호)은 건너뜀
-      if (!isBinary) { try { conn.texts.push(JSON.parse(buf.toString())); } catch {} return; }
+      if (!isBinary) { conn.texts0.push(buf.toString()); try { conn.texts.push(JSON.parse(buf.toString())); } catch {} return; }
       conn.audioBytes += buf.length;
+      if (conn.audioMsgs.length < 64) conn.audioMsgs.push(buf);
       // 소리가 담긴 조각 수(음소거·게이트로 무음이 된 조각은 세지 않는다) — 음소거 회귀 테스트용
       let loud = false;
       for (let i = 0; i + 1 < buf.length; i += 2) { const v = buf.readInt16LE(i); if (v > 200 || v < -200) { loud = true; break; } }

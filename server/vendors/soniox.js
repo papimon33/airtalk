@@ -1,13 +1,18 @@
 /* Soniox 실시간 STT — 연결(헤더 인증)·세션 context(용어집) 조립·용어 실검증·발화 언어 판정 */
 import { WebSocket } from 'ws';
-import { SONIOX_WS_URL, SONIOX_API_KEY, SONIOX_MODEL } from '../config.js';
+import { SONIOX_WS_URL, SONIOX_API_KEY, SONIOX_MODEL, SONIOX_AUDIO_CODEC, SONIOX_OPUS_BITRATE } from '../config.js';
 import { termsConfig } from '../store/index.js';
 import { TERM_LANGS } from '../store/terms.js';
 import { trimScopedTerms, estimateContextTokens } from '../util/pipeline_util.js';
+import { wrapSonioxSocket } from './soniox_audio.js';
 
 // Soniox 실시간 STT 연결 — 키는 연결 요청의 Authorization 헤더로 보낸다.
 // start(config) 메시지의 api_key 는 2027-01-15 에 중단되므로 config 에는 키를 넣지 않는다.
-export const openSonioxWs = () => new WebSocket(SONIOX_WS_URL, { headers: { Authorization: `Bearer ${SONIOX_API_KEY}` } });
+// 보내는 PCM 은 소켓 안에서 Opus 로 압축된다(SONIOX_AUDIO_CODEC=pcm 이면 그대로) — 파이프라인은 PCM 을 보내면 된다.
+export const openSonioxWs = () => wrapSonioxSocket(
+  new WebSocket(SONIOX_WS_URL, { headers: { Authorization: `Bearer ${SONIOX_API_KEY}` } }),
+  { codec: SONIOX_AUDIO_CODEC, bitrate: SONIOX_OPUS_BITRATE },
+);
 
 // 데스크 모드 전용 general context — Soniox 에 "이 자리가 어떤 상황인지" 배경을 줘서
 // 저빈도·동음이의 단어(예 喫煙室=きつえんしつ) 인식률을 끌어올린다. context.general = [{key,value}].

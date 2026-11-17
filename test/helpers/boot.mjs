@@ -31,6 +31,7 @@ export async function bootServer(extraEnv = {}) {
       DATA_DIR: dataDir,
       OPENAI_API_KEY: 'sk-dummy-test',
       SONIOX_API_KEY: 'test-soniox-key',
+      SONIOX_AUDIO_CODEC: 'pcm', // 가짜 엔진이 PCM 소리 크기를 세는 시험이 많다 — Opus 경로는 opus-audio.test 가 따로 켠다
       CARTESIA_API_KEY: '',
       DATA_KEY: '',
       ADMIN_ID: 'admin',

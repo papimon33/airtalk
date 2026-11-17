@@ -14,6 +14,9 @@ export const SONIOX_MODEL = 'stt-rt-v6'; // 실시간 번역·안내데스크·�
 // 에이전트 텍스트 입력(v6): 이 기기에서 재생하는 TTS 문장을 엔진에 알려 마이크로 다시 들어온 소리를 사용자 말로 적지 않게 한다.
 // 문제가 생기면 SONIOX_AGENT_TEXT=0 으로 끈다(다시 배포 없이 환경변수만).
 export const SONIOX_AGENT_TEXT = process.env.SONIOX_AGENT_TEXT !== '0';
+// Soniox 로 보내는 음성 형식: opus(기본, Ogg 32kbps 압축 — 해외 전송량 약 1/11) | pcm(원음 그대로). 근거·동작은 vendors/soniox_audio.js
+export const SONIOX_AUDIO_CODEC = String(process.env.SONIOX_AUDIO_CODEC || 'opus').toLowerCase() === 'pcm' ? 'pcm' : 'opus';
+export const SONIOX_OPUS_BITRATE = Math.min(64000, Math.max(12000, Number(process.env.SONIOX_OPUS_BITRATE) || 32000));
 export const CARTESIA_TTS_WS_BASE = process.env.CARTESIA_TTS_WS_URL || 'wss://api.cartesia.ai/tts/websocket';
 
 export const PORT = Number(process.env.PORT || 3000);
