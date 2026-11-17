@@ -27,3 +27,8 @@ android/app/build/
 # 화면 테스트(Playwright) 결과
 test-results/
 playwright-report/
+
+# Docker 배포: 인증서·회사 루트 인증서는 저장소에 두지 않는다
+deploy/certs/*
+!deploy/certs/README.md
+deploy/ca/*.pem

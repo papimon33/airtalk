@@ -1,0 +1,23 @@
+# AirTalk nginx — HTTP 모드: ① 로컬 시험(http://localhost) ② 앞단 웹 방화벽·로드밸런서가 HTTPS 를 처리하고 이 서버엔 HTTP 로 넘겨줄 때.
+# ②에서는 앞단이 보낸 X-Forwarded-Proto(https)를 그대로 넘기고, 관리자 IP 제한이 실제 접속자 기준이 되도록
+# REAL_IP_FROM 에 앞단 장비의 IP 대역을 넣는다(앱의 TRUST_PROXY 도 2 로). 기본값은 아무 영향 없는 127.0.0.1/32.
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+map $http_x_forwarded_proto $airtalk_proto { default $http_x_forwarded_proto; '' http; }
+
+server {
+    listen 80;
+    server_name ${SERVER_NAME};
+    server_tokens off;
+    client_max_body_size 20m;   # 용어집 업로드(최대 16MB)
+    set_real_ip_from ${REAL_IP_FROM};
+    real_ip_header X-Forwarded-For;
+
+    location ~ ^/(admin|api/admin)(/|$) {
+        allow ${ADMIN_ALLOW};
+        deny all;
+        include /etc/nginx/conf.d/airtalk-proxy.inc;
+    }
+    location / {
+        include /etc/nginx/conf.d/airtalk-proxy.inc;
+    }
+}

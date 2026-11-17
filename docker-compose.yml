@@ -1,0 +1,48 @@
+# AirTalk — nginx(HTTPS·웹소켓·관리자 IP 제한) + 앱(Node, 데이터는 볼륨)
+#   준비: .env(.env.example 참고 — API 키, ADMIN_ID·ADMIN_PASSWORD, AUTH_SECRET, DATA_KEY)
+#   실행: docker compose up -d --build        상태: docker compose ps / 로그: docker compose logs -f airtalk
+#   모드: NGINX_MODE=https(기본, deploy/certs 에 인증서) | http(로컬 시험·앞단 장비가 HTTPS 처리)
+#   자세한 절차: docs/DEPLOY_DOCKER.md
+name: airtalk
+
+services:
+  airtalk:
+    build: .
+    image: airtalk:${AIRTALK_TAG:-latest}
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      TRUST_PROXY: ${TRUST_PROXY:-1}          # 앞단 프록시 수(nginx 1, 앞에 웹 방화벽이 더 있으면 2)
+      QR_LAN_FALLBACK: "0"                     # 컨테이너 안의 LAN IP 는 내부 주소 — QR 은 접속한 주소(운영은 PUBLIC_HOST) 기준
+    volumes:
+      - airtalk-data:/app/data                 # SQLite(airtalk.db)·계정·설정·접속 로그(logs/)
+    expose:
+      - "3000"                                 # 밖으로 직접 열지 않음 — nginx 만 접근
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      airtalk:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-_}
+      ADMIN_ALLOW: ${ADMIN_ALLOW:-all}         # 관리자 화면을 열 IP 대역(예: 10.0.0.0/8). 기본 all
+      REAL_IP_FROM: ${REAL_IP_FROM:-127.0.0.1/32}   # http 모드: 앞단 장비 IP 대역
+    volumes:
+      - ./deploy/nginx/${NGINX_MODE:-https}.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./deploy/nginx/proxy.inc.template:/etc/nginx/templates/airtalk-proxy.inc.template:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  airtalk-data:

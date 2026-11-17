@@ -78,6 +78,16 @@ npm test
 - 화면 테스트: `npm run build && npm run test:e2e` (Playwright, 이 PC에 설치된 Chrome 사용, 역시 무과금).
 - Windows 에서는 '정상 종료 시 로그인 유지' 시험 1건을 건너뜁니다. Windows 는 정상 종료 신호(SIGTERM)를 보낼 수 없습니다.
 
+### Docker 로 실행(서버 운영)
+
+```bash
+cp .env.example .env            # 키·관리자 비밀번호·AUTH_SECRET·DATA_KEY·PUBLIC_HOST
+docker compose up -d --build    # nginx(HTTPS·웹소켓) + 앱, 데이터는 볼륨
+```
+
+- 인증서는 `deploy/certs/` 에 넣습니다. 로컬 시험은 `.env` 에 `NGINX_MODE=http`, `HTTP_PORT=8088` 을 넣고 `http://localhost:8088` 으로 접속합니다.
+- 업데이트(이미지 반입·되돌리기), 백업, 관리자 IP 제한, 방화벽은 [`docs/DEPLOY_DOCKER.md`](docs/DEPLOY_DOCKER.md) 를 봅니다.
+
 ## 모델 구성과 교체 위치
 
 음성 인식·번역, 번역 다듬기, 음성 합성을 각각 다른 회사의 모델이 맡습니다. 모델 이름은 `server/config.js` 한곳에 있고, 회사별 호출 코드는 `server/vendors/` 에 나뉘어 있습니다.
@@ -96,7 +106,7 @@ npm test
 ## 데이터·보안
 
 - 저장소: `MONGODB_URI` 가 있으면 MongoDB, 없으면 서버 디스크(`data/`). 세션·대화는 SQLite(`data/airtalk.db`, Node 내장), 계정·설정은 `data/*.json` 입니다. `DATA_KEY` 를 정하면 둘 다 AES-256-GCM 으로 암호화해 저장합니다.
-- 대화 기록 보관 기간: `TRANSCRIPT_RETENTION_DAYS`(일)가 지나면 대화 문장·응대 기록을 자동으로 지웁니다(세션·사용량 통계는 남김). 0 이면 무기한입니다.
+- 대화 기록 보관 기간: 기본 **90일**이 지나면 대화 문장·응대 기록을 자동으로 지웁니다(세션·사용량 통계는 남김). `TRANSCRIPT_RETENTION_DAYS` 로 바꾸고, 0 이면 무기한입니다.
 - 접속·관리 로그: 로그인 성공·실패, 상태를 바꾸는 요청, 관리자 조회, 번역 시작·종료를 `data/logs/audit-날짜.jsonl` 에 남기고 365일 보관합니다(`AUDIT_RETENTION_DAYS`). 비밀번호·대화 내용은 남기지 않습니다.
 - 관리자 2단계 인증(TOTP), 로그인 시도 제한, 보안 헤더, 교차 출처 요청 차단을 적용했습니다. 자세한 내용은 `docs/SECURITY_GUIDE.md`.
 - 저장소의 평가 자료(`tools/eval/`의 대본·시나리오·표본)는 직접 만든 가상 대화입니다. 실제 이용자 대화나 운영 데이터는 들어 있지 않습니다.
@@ -160,7 +170,8 @@ android/               # Android 앱(WebView + 네이티브 마이크) → andro
 desktop/               # Windows·macOS 데스크톱 앱(Electron) → desktop/README.md
 test/                  # 서버 테스트(npm test) · test/e2e 화면 테스트(npm run test:e2e)
 tools/eval/            # 번역 품질·지연 평가 도구(실제 서비스 호출, 과금) → tools/eval/README.md
-docs/                  # 보안·안내데스크 운영 문서, 설계 기록
+docs/                  # 보안·안내데스크 운영 문서, Docker 설치 안내서(DEPLOY_DOCKER.md), 설계 기록
+Dockerfile · docker-compose.yml · deploy/   # 서버 운영용 컨테이너(nginx 설정·인증서 자리)
 ```
 
 개발 기록·WebSocket 메시지 형식·화면 표시 규칙은 `PROJECT_NOTES.md` 에 있습니다.

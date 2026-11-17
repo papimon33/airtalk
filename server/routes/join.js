@@ -103,8 +103,9 @@ export function registerJoinRoutes(app) {
     if (process.env.PUBLIC_HOST) {
       host = process.env.PUBLIC_HOST;
       proto = 'https';
-    } else if (!host || /^(localhost|127\.|\[::1\]|0\.0\.0\.0)/.test(host)) {
+    } else if ((!host || /^(localhost|127\.|\[::1\]|0\.0\.0\.0)/.test(host)) && process.env.QR_LAN_FALLBACK !== '0') {
       // 로컬 접속(localhost)이면 같은 와이파이 모바일이 닿도록 LAN IP 로 대체.
+      // 컨테이너 안에서는 LAN IP 가 컨테이너 내부 주소라 쓸모없다 — docker-compose 가 QR_LAN_FALLBACK=0 으로 끈다.
       host = `${getLanIp()}:${PORT}`;
       proto = 'http';
     }

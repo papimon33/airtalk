@@ -1,0 +1,12 @@
+# AirTalk 앱으로 넘기기 — 웹소켓(실시간 음성·번역)이 끊기지 않게
+proxy_pass http://airtalk:3000;
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host $http_host;   # QR 주소 만들 때 쓴다(포트 포함)
+proxy_set_header X-Forwarded-Proto $airtalk_proto;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_read_timeout 3600s;    # 긴 통역·회의 중 연결 유지
+proxy_send_timeout 3600s;
+proxy_buffering off;         # 실시간 음성 지연 방지

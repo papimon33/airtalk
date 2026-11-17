@@ -33,6 +33,7 @@ export async function bootServer(extraEnv = {}) {
       OPENAI_API_KEY: 'sk-dummy-test',
       SONIOX_API_KEY: 'test-soniox-key',
       SONIOX_AUDIO_CODEC: 'pcm', // 가짜 엔진이 PCM 소리 크기를 세는 시험이 많다 — Opus 경로는 opus-audio.test 가 따로 켠다
+      TRANSCRIPT_RETENTION_DAYS: '0', // 시험 데이터는 시각이 1970년(updatedAt: 1 등)이라 기본 90일이면 지워진다 — 보관 기간 시험만 따로 켠다
       CARTESIA_API_KEY: '',
       DATA_KEY: '',
       ADMIN_ID: 'admin',

@@ -1,0 +1,4 @@
+# 리눅스 컨테이너 안에서 실행되는 파일은 항상 LF(윈도우에서 받아도 CRLF 로 바뀌지 않게)
+*.sh text eol=lf
+Dockerfile text eol=lf
+deploy/nginx/*.template text eol=lf

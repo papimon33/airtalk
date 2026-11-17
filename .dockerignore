@@ -1,0 +1,24 @@
+# 이미지에 넣지 않는 것 — 비밀값·데이터·개발 산출물·앱 소스(안드로이드·데스크톱)·평가 도구
+.env
+.env.*
+!.env.example
+data
+node_modules
+dist
+dist2
+build
+.git
+.github
+.claude
+android
+desktop
+docs
+tools
+test
+test-results
+playwright-report
+deploy/certs
+*.log
+*.hwpx
+*.docx
+w.bat
